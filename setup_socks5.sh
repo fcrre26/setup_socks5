@@ -67,7 +67,7 @@ EOF
 set_socks5_credentials() {
     read -p "请输入SOCKS5端口: " socks_port
     read -p "请输入用户名: " socks_user
-    read -p "请输入密码: " socks_pass # 移除了 -s 选项，现在密码可见
+    read -p "请输入密码: " socks_pass
     configure_xray "$socks_port" "$socks_user" "$socks_pass"
     generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
     echo "SOCKS5端口、用户名和密码设置完成。"
