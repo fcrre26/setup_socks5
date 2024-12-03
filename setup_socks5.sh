@@ -38,15 +38,7 @@ setup_environment() {
     iptables -X
     iptables-save
 
-# 下载并设置Xray
-install_xray() {
-    echo "正在从GitHub下载Xray..."
-    wget --no-check-certificate -O /usr/local/bin/xray "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
-    unzip /usr/local/bin/xray -d /usr/local/bin
-    chmod +x /usr/local/bin/xray
-    echo "Xray已下载并设置为可执行。"
-}
-
+    install_xray
     echo "创建Xray服务文件..."
     cat <<EOF > /etc/systemd/system/xray.service
 [Unit]
@@ -66,6 +58,17 @@ EOF
     $service_manager enable xray
     $service_manager start xray
     echo "环境配置完成。"
+}
+
+# 下载并设置Xray
+install_xray() {
+    echo "正在从GitHub下载Xray..."
+    # 请确保使用正确的链接，以下链接仅为示例，您需要检查最新版本的链接
+    wget --no-check-certificate -O /usr/local/bin/xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
+    unzip /usr/local/bin/xray.zip -d /usr/local/bin
+    rm /usr/local/bin/xray.zip # 清理下载的zip文件
+    chmod +x /usr/local/bin/xray
+    echo "Xray已下载并设置为可执行。"
 }
 
 # SOCKS5端口设置、用户名与密码设置
