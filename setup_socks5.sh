@@ -70,14 +70,14 @@ set_socks5_credentials() {
     read -p "请输入密码: " -s socks_pass
     echo
     configure_xray
-    generate_proxy_list
+    generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
     echo "SOCKS5端口、用户名和密码设置完成。"
 }
 
 # 代理列表详情
 show_proxy_details() {
     echo "代理列表详情："
-    echo "$(cat /root/proxy_list.txt)"
+    cat /root/proxy_list.txt
 }
 
 # 配置Xray
@@ -90,10 +90,10 @@ configure_xray() {
         cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 listen = "${ips[i]}"
-port = $socks_port
+port = $1
 protocol = "socks"
 tag = "in$((i+1))"
-settings = { auth = "password", udp = true, accounts = [{ user = "$socks_user", pass = "$socks_pass" }] }
+settings = { auth = "password", udp = true, accounts = [{ user = "$2", pass = "$3" }] }
 [[outbounds]]
 protocol = "freedom"
 tag = "out$((i+1))"
@@ -105,6 +105,9 @@ EOF
 
 # 生成代理列表文件
 generate_proxy_list() {
+    local socks_port=$1
+    local socks_user=$2
+    local socks_pass=$3
     local ips=($(hostname -I))
     echo "生成代理列表文件..."
     echo -n "" > /root/proxy_list.txt
