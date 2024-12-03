@@ -38,9 +38,14 @@ setup_environment() {
     iptables -X
     iptables-save
 
-    echo "下载并设置Xray..."
-    wget -O /usr/local/bin/xray https://www.h1z1.xin/xray
+# 下载并设置Xray
+install_xray() {
+    echo "正在从GitHub下载Xray..."
+    wget --no-check-certificate -O /usr/local/bin/xray "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
+    unzip /usr/local/bin/xray -d /usr/local/bin
     chmod +x /usr/local/bin/xray
+    echo "Xray已下载并设置为可执行。"
+}
 
     echo "创建Xray服务文件..."
     cat <<EOF > /etc/systemd/system/xray.service
