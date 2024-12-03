@@ -67,9 +67,8 @@ EOF
 set_socks5_credentials() {
     read -p "请输入SOCKS5端口: " socks_port
     read -p "请输入用户名: " socks_user
-    read -p "请输入密码: " -s socks_pass
-    echo
-    configure_xray
+    read -p "请输入密码: " socks_pass # 移除了 -s 选项，现在密码可见
+    configure_xray "$socks_port" "$socks_user" "$socks_pass"
     generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
     echo "SOCKS5端口、用户名和密码设置完成。"
 }
@@ -123,12 +122,14 @@ show_menu() {
     echo "1. 环境配置"
     echo "2. SOCKS5端口设置、用户名与密码设置"
     echo "3. 代理列表详情"
-    read -p "请输入选项 [1-3]: " option
+    echo "4. 退出"
+    read -p "请输入选项 [1-4]: " option
     case $option in
         1) setup_environment ;;
         2) set_socks5_credentials ;;
         3) show_proxy_details ;;
-        *) echo "无效选项，请输入1-3之间的数字" ;;
+        4) echo "退出脚本。"; exit ;;
+        *) echo "无效选项，请输入1-4之间的数字" ;;
     esac
 }
 
