@@ -77,10 +77,7 @@ set_socks5_credentials() {
 # 代理列表详情
 show_proxy_details() {
     echo "代理列表详情："
-    local ips=($(hostname -I))
-    for ip in "${ips[@]}"; do
-        echo "IP: $ip, 端口: $socks_port, 用户名: $socks_user, 密码: $socks_pass"
-    done
+    echo "$(cat /root/proxy_list.txt)"
 }
 
 # 配置Xray
@@ -110,9 +107,9 @@ EOF
 generate_proxy_list() {
     local ips=($(hostname -I))
     echo "生成代理列表文件..."
-    echo -e "IP\t\tPort\t\tUsername\tPassword" > /root/proxy_list.txt
+    echo -n "" > /root/proxy_list.txt
     for ip in "${ips[@]}"; do
-        echo -e "$ip\t$socks_port\t$socks_user\t$socks_pass" >> /root/proxy_list.txt
+        echo "$ip:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
     done
     echo "代理列表文件已生成：/root/proxy_list.txt"
 }
