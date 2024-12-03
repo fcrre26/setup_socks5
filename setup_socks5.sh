@@ -129,7 +129,7 @@ show_menu() {
     echo "请选择要执行的操作："
     echo "1. 环境配置"
     echo "2. SOCKS5代理设置"
-    echo "3. 代理列表详情"
+    echo "3. 代理列表"
     echo "4. 退出"
     read -p "请输入选项 [1-4]: " option
     case $option in
