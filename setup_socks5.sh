@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 检测系统类型并设置相应的命令
+# 系统检测模块
 detect_system() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
@@ -26,7 +26,7 @@ detect_system() {
     fi
 }
 
-# 检测并安装 unzip
+# 软件安装模块
 check_and_install_unzip() {
     if ! command -v unzip &> /dev/null; then
         echo "未安装unzip，正在安装..."
@@ -38,7 +38,6 @@ check_and_install_unzip() {
     fi
 }
 
-# 检测并安装防火墙
 check_and_install_iptables() {
     if ! command -v iptables &> /dev/null; then
         echo "未安装iptables，正在安装..."
@@ -51,7 +50,7 @@ check_and_install_iptables() {
     fi
 }
 
-# 环境配置
+# 环境配置模块
 setup_environment() {
     echo "设置防火墙规则..."
     iptables -P INPUT ACCEPT
@@ -85,19 +84,17 @@ EOF
     echo "环境配置完成。"
 }
 
-# 下载并设置Xray
 install_xray() {
     echo "正在从GitHub下载Xray..."
-    # 请确保使用正确的链接，以下链接仅为示例，您需要检查最新版本的链接
     check_and_install_unzip
     wget --no-check-certificate -O /usr/local/bin/xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
     unzip /usr/local/bin/xray.zip -d /usr/local/bin
-    rm /usr/local/bin/xray.zip # 清理下载的zip文件
+    rm /usr/local/bin/xray.zip
     chmod +x /usr/local/bin/xray
     echo "Xray已下载并设置为可执行。"
 }
 
-# SOCKS5端口设置、用户名与密码设置
+# 代理设置模块
 set_socks5_credentials() {
     read -p "请输入SOCKS5端口: " socks_port
     read -p "请输入用户名: " socks_user
@@ -107,13 +104,6 @@ set_socks5_credentials() {
     echo "SOCKS5端口、用户名和密码设置完成。"
 }
 
-# 代理列表详情
-show_proxy_details() {
-    echo "代理列表详情："
-    cat /root/proxy_list.txt
-}
-
-# 配置Xray
 configure_xray() {
     echo "配置Xray..."
     mkdir -p /etc/xray
@@ -136,7 +126,7 @@ EOF
     echo "Xray配置已完成。"
 }
 
-# 生成代理列表文件
+# 代理管理模块
 generate_proxy_list() {
     local socks_port=$1
     local socks_user=$2
@@ -150,27 +140,21 @@ generate_proxy_list() {
     echo "代理列表文件已生成：/root/proxy_list.txt"
 }
 
-# 清除所有代理规则
 clear_proxy_rules() {
     echo "清除所有代理规则..."
-    # 停止并禁用Xray服务
     $service_manager stop xray
     $service_manager disable xray
-    # 删除Xray配置文件和服务文件
     rm -f /etc/xray/serve.toml
     rm -f /etc/systemd/system/xray.service
-    # 清空iptables规则
     iptables -F
     iptables -X
     iptables -t nat -F
     iptables -t mangle -F
     iptables-save
-    # 删除代理列表文件
     rm -f /root/proxy_list.txt
     echo "已清除所有代理规则，回到未安装SOCKS5代理的状态。"
 }
 
-# 测试代理连通性
 test_proxy_connectivity() {
     echo "测试代理连通性..."
     local socks_port=$1
@@ -179,7 +163,6 @@ test_proxy_connectivity() {
     local ips=($(hostname -I))
     for ip in "${ips[@]}"; do
         echo "正在测试 $ip:$socks_port..."
-        # 使用 curl 测试代理连通性，这里以 httpbin.org 为例
         curl -s -x socks5h://$socks_user:$socks_pass@$ip:$socks_port http://httpbin.org/ip
         if [ $? -eq 0 ]; then
             echo "$ip:$socks_port 代理连接成功"
@@ -190,7 +173,7 @@ test_proxy_connectivity() {
     echo "代理连通性测试完成。"
 }
 
-# 菜单函数
+# 菜单模块
 show_menu() {
     echo "请选择要执行的操作："
     echo "1. 环境配置"
