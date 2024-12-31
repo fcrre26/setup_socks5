@@ -252,7 +252,7 @@ show_menu() {
     echo "请选择要执行的操作："
     echo "1. 环境配置"
     echo "2. SOCKS5代理设置"
-    echo "3. 代理列表"
+    echo "3. 显示代理列表"  # 修改此行
     echo "4. 清除所有代理规则"
     echo "5. 测试代理连通性"
     echo "6. 设置带宽控制"
@@ -262,7 +262,7 @@ show_menu() {
     case $option in
         1) setup_environment ;;
         2) set_socks5_credentials ;;
-        3) show_proxy_details ;;
+        3) cat /root/proxy_list.txt ;;  # 修改此行，直接显示代理列表
         4) clear_proxy_rules ;;
         5) test_proxy_connectivity "${socks_port}" "${socks_user}" "${socks_pass}" ;;
         6) setup_bandwidth_control ;;
