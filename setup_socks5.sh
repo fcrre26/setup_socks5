@@ -88,15 +88,6 @@ EOF
 }
 
 install_xray() {
-    echo "下载Xray..."
-    wget -O /usr/local/bin/xray https://www.h1z1.xin/xray
-    chmod +x /usr/local/bin/xray
-    echo "Xray已下载并设置为可执行。"
-    return 0
-}
-
-
-install_xray() {
     echo "正在从GitHub下载Xray..."
     check_and_install_unzip
     wget --no-check-certificate -O /usr/local/bin/xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
