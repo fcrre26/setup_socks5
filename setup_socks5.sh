@@ -351,7 +351,7 @@ set_ip_strategy() {
         3)
             echo "设置一个IPv4进，随机IPv6出..."
             for ip in "${ips[@]}"; do
-                if [[ $ip == *:* ]]; then
+                if [[ $ip != *:* ]]; then
                     random_ip=$(select_random_ip "${ips[@]}")
                     ip6tables -t nat -A POSTROUTING -j SNAT --to-source $random_ip
                 fi
