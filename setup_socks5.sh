@@ -186,6 +186,7 @@ test_proxy_connectivity() {
     local ips=($(hostname -I))
     for ip in "${ips[@]}"; do
         echo "正在测试 $ip:$socks_port..."
+        # 使用 curl 进行测试，并捕获错误信息
         curl -s -x socks5h://$socks_user:$socks_pass@$ip:$socks_port http://httpbin.org/ip
         if [ $? -eq 0 ]; then
             echo "$ip:$socks_port 代理连接成功"
