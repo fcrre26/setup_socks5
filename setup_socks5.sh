@@ -60,6 +60,14 @@ setup_environment() {
     iptables -t mangle -F
     iptables -F
     iptables -X
+
+    # 添加SNAT和DNAT规则
+    local ips=($(hostname -I))
+    for ip in "${ips[@]}"; do
+        iptables -t nat -A POSTROUTING -s $ip -j SNAT --to-source $ip
+        iptables -t nat -A PREROUTING -d $ip -j DNAT --to-destination $ip
+    done
+
     iptables-save
 
     install_xray
