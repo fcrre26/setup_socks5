@@ -186,20 +186,30 @@ test_proxy_connectivity() {
         return 1
     fi
 
-    while IFS=: read -r ip port user pass; do
-        echo "正在测试 $ip:$port..."
-        
-        # 检查是否为IPv6地址，并添加方括号
-        if [[ $ip == *:* ]]; then
-            ip="[$ip]"
-        fi
+    while IFS= read -r line; do
+        # 使用正则表达式解析行
+        if [[ $line =~ ^(.+):([0-9]+):(.+):(.+)$ ]]; then
+            ip="${BASH_REMATCH[1]}"
+            port="${BASH_REMATCH[2]}"
+            user="${BASH_REMATCH[3]}"
+            pass="${BASH_REMATCH[4]}"
+            
+            echo "正在测试 $ip:$port..."
+            
+            # 检查是否为IPv6地址，并添加方括号
+            if [[ $ip == *:* ]]; then
+                ip="[$ip]"
+            fi
 
-        # 使用 curl 进行测试，并捕获详细的调试信息
-        curl -v -x socks5h://$user:$pass@$ip:$port http://httpbin.org/ip
-        if [ $? -eq 0 ]; then
-            echo "$ip:$port 代理连接成功"
+            # 使用 curl 进行测试，并捕获详细的调试信息
+            curl -v -x socks5h://$user:$pass@$ip:$port http://httpbin.org/ip
+            if [ $? -eq 0 ]; then
+                echo "$ip:$port 代理连接成功"
+            else
+                echo "$ip:$port 代理连接失败"
+            fi
         else
-            echo "$ip:$port 代理连接失败"
+            echo "行格式不正确: $line"
         fi
     done < /root/proxy_list.txt
 
