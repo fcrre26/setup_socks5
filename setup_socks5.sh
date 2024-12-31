@@ -180,24 +180,26 @@ clear_proxy_rules() {
 
 test_proxy_connectivity() {
     echo "测试代理连通性..."
-    local socks_port=$1
-    local socks_user=$2
-    local socks_pass=$3
-    local ips=($(hostname -I))
-    for ip in "${ips[@]}"; do
-        echo "正在测试 $ip:$socks_port..."
-        # 使用 curl 进行测试，并捕获错误信息
-        curl -s -x socks5h://$socks_user:$socks_pass@$ip:$socks_port http://httpbin.org/ip
+    
+    if [ ! -f /root/proxy_list.txt ]; then
+        echo "/root/proxy_list.txt 文件不存在。"
+        return 1
+    fi
+
+    while IFS=: read -r ip port user pass; do
+        echo "正在测试 $ip:$port..."
+        # 使用 curl 进行测试，并捕获详细的调试信息
+        curl -v -x socks5h://$user:$pass@$ip:$port http://httpbin.org/ip
         if [ $? -eq 0 ]; then
-            echo "$ip:$socks_port 代理连接成功"
+            echo "$ip:$port 代理连接成功"
         else
-            echo "$ip:$socks_port 代理连接失败"
+            echo "$ip:$port 代理连接失败"
         fi
-    done
+    done < /root/proxy_list.txt
+
     echo "代理连通性测试完成。"
     return 0
 }
-
 # 自动检测所有活动网络接口
 get_active_interfaces() {
     interfaces=$(ip -o link show | awk -F': ' '{print $2}' | grep -v 'lo')
