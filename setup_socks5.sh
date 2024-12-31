@@ -173,6 +173,71 @@ test_proxy_connectivity() {
     echo "代理连通性测试完成。"
 }
 
+# 自动检测所有活动网络接口
+get_active_interfaces() {
+    interfaces=$(ip -o link show | awk -F': ' '{print $2}' | grep -v 'lo')
+    echo "检测到的活动网络接口: $interfaces"
+}
+
+# 获取当前活动的IP数量
+get_active_ip_count() {
+    active_ip_count=$(ss -H -t state established | awk '{print $5}' | cut -d: -f1 | sort | uniq | wc -l)
+    echo "当前活动的IP数量: $active_ip_count"
+}
+
+# 带宽管理模块
+setup_bandwidth_control() {
+    get_active_interfaces
+    get_active_ip_count
+
+    local total_bandwidth="50Mbit"  # 假设的总带宽，实际应根据VPS的带宽设置
+    if [ "$active_ip_count" -eq 0 ]; then
+        echo "没有活动的IP，跳过带宽设置。"
+        return
+    fi
+
+    local rate=$(echo "$total_bandwidth / $active_ip_count" | bc)  # 动态计算每个IP的带宽
+
+    echo "设置带宽控制..."
+    for interface in $interfaces; do
+        tc qdisc del dev $interface root 2>/dev/null  # 删除已有的qdisc配置
+        tc qdisc add dev $interface root handle 1: htb default 30
+        tc class add dev $interface parent 1: classid 1:1 htb rate $total_bandwidth
+
+        for ip in $(hostname -I); do
+            tc class add dev $interface parent 1:1 classid 1:10 htb rate ${rate}Mbit ceil ${rate}Mbit
+            tc filter add dev $interface protocol ip parent 1:0 prio 1 u32 match ip dst $ip flowid 1:10
+        done
+    done
+
+    echo "带宽控制设置完成。"
+}
+
+# 启用BBR
+enable_bbr() {
+    echo "启用BBR..."
+    
+    # 检查当前内核是否支持BBR
+    if ! sysctl net.ipv4.tcp_available_congestion_control | grep -q "bbr"; then
+        echo "当前内核不支持BBR，请升级内核。"
+        return
+    fi
+
+    # 设置BBR为默认拥塞控制算法
+    echo "net.core.default_qdisc=fq" | sudo tee -a /etc/sysctl.conf
+    echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.conf
+
+    # 立即应用更改
+    sudo sysctl -p
+
+    # 验证BBR是否启用
+    if sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
+        echo "BBR已成功启用。"
+    else
+        echo "BBR启用失败，请检查配置。"
+    fi
+}
+
 # 菜单模块
 show_menu() {
     echo "请选择要执行的操作："
@@ -181,16 +246,20 @@ show_menu() {
     echo "3. 代理列表"
     echo "4. 清除所有代理规则"
     echo "5. 测试代理连通性"
-    echo "6. 退出"
-    read -p "请输入选项 [1-6]: " option
+    echo "6. 设置带宽控制"
+    echo "7. 启用BBR"
+    echo "8. 退出"
+    read -p "请输入选项 [1-8]: " option
     case $option in
         1) setup_environment ;;
         2) set_socks5_credentials ;;
         3) show_proxy_details ;;
         4) clear_proxy_rules ;;
         5) test_proxy_connectivity "${socks_port}" "${socks_user}" "${socks_pass}" ;;
-        6) echo "退出脚本。"; exit ;;
-        *) echo "无效选项，请输入1-6之间的数字" ;;
+        6) setup_bandwidth_control ;;
+        7) enable_bbr ;;
+        8) echo "退出脚本。"; exit ;;
+        *) echo "无效选项，请输入1-8之间的数字" ;;
     esac
 }
 
@@ -199,4 +268,5 @@ detect_system
 check_and_install_iptables
 while true; do
     show_menu
+    sleep 60  # 每分钟检查和调整一次
 done
