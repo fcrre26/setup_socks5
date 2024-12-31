@@ -203,19 +203,19 @@ setup_bandwidth_control() {
 
     # 确保输入的带宽格式正确
     if [[ ! $total_bandwidth =~ ^[0-9]+M$ ]]; then
-        log "ERROR" "输入格式错误，请输入类似'50M'的格式。"
+        echo "ERROR: 输入格式错误，请输入类似'50M'的格式。"
         return
     fi
 
     if [ "$active_ip_count" -eq 0 ]; then
-        log "INFO" "没有活动的IP，跳过带宽设置。"
+        echo "INFO: 没有活动的IP，跳过带宽设置。"
         return
     fi
 
     # 动态计算每个IP的带宽
     local rate=$(echo "${total_bandwidth%M} / $active_ip_count" | bc)Mbit
 
-    log "INFO" "设置带宽控制..."
+    echo "INFO: 设置带宽控制..."
     for interface in $interfaces; do
         tc qdisc del dev $interface root 2>/dev/null  # 删除已有的qdisc配置
         tc qdisc add dev $interface root handle 1: htb default 30
@@ -227,8 +227,9 @@ setup_bandwidth_control() {
         done
     done
 
-    log "INFO" "带宽控制设置完成。"
+    echo "INFO: 带宽控制设置完成。"
 }
+
 
 # 启用BBR
 enable_bbr() {
