@@ -202,7 +202,7 @@ test_proxy_connectivity() {
             fi
 
             # 使用 curl 进行测试，并捕获详细的调试信息
-            if curl -s -x socks5h://$user:$pass@$ip:$port http://httpbin.org/ip > /dev/null; then
+            if curl -s --proxy socks5h://$user:$pass@$ip:$port http://httpbin.org/ip -o /dev/null; then
                 echo "$ip:$port 代理连接成功"
             else
                 echo "$ip:$port 代理连接失败"
