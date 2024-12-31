@@ -326,28 +326,23 @@ listen = "$ipv4"
 port = $socks_port
 protocol = "socks"
 tag = "in_$ipv4"
-settings = {
-    auth = "password"
-    udp = true
-    accounts = [
-        {
-            user = "$socks_user"
-            pass = "$socks_pass"
-        }
-    ]
-}
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
 
 [[outbounds]]
 protocol = "freedom"
 tag = "out_$ipv4"
-settings = {
-    domainStrategy = "UseIPv4"
-}
+[outbounds.settings]
+domainStrategy = "UseIPv4"
 sendThrough = "$ipv4"
 
 [[routing.rules]]
 type = "field"
-inboundTag = "in_$ipv4"
+inboundTag = ["in_$ipv4"]
 outboundTag = "out_$ipv4"
 
 EOF
@@ -400,16 +395,12 @@ listen = "$ipv4"
 port = $socks_port
 protocol = "socks"
 tag = "in_$ipv4"
-settings = {
-    auth = "password"
-    udp = true
-    accounts = [
-        {
-            user = "$socks_user"
-            pass = "$socks_pass"
-        }
-    ]
-}
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
 
 EOF
             done
@@ -420,14 +411,13 @@ EOF
 [[outbounds]]
 protocol = "freedom"
 tag = "out"
-settings = {
-    domainStrategy = "UseIPv4"
-}
+[outbounds.settings]
+domainStrategy = "UseIPv4"
 sendThrough = "$next_ip"
 
 [[routing.rules]]
 type = "field"
-network = "tcp,udp"
+network = ["tcp", "udp"]
 outboundTag = "out"
 
 EOF
@@ -479,16 +469,12 @@ listen = "$ipv4"
 port = $socks_port
 protocol = "socks"
 tag = "in_$ipv4"
-settings = {
-    auth = "password"
-    udp = true
-    accounts = [
-        {
-            user = "$socks_user"
-            pass = "$socks_pass"
-        }
-    ]
-}
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
 
 EOF
             done
@@ -499,14 +485,13 @@ EOF
 [[outbounds]]
 protocol = "freedom"
 tag = "out"
-settings = {
-    domainStrategy = "UseIPv6"
-}
+[outbounds.settings]
+domainStrategy = "UseIPv6"
 sendThrough = "$next_ipv6"
 
 [[routing.rules]]
 type = "field"
-network = "tcp,udp"
+network = ["tcp", "udp"]
 outboundTag = "out"
 
 EOF
