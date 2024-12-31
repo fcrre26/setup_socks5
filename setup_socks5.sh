@@ -71,6 +71,22 @@ setup_environment() {
     ip6tables -F
     ip6tables -X
 
+    # 设置默认IP策略
+    echo "设置默认IP策略..."
+    # 获取IPv4和IPv6地址
+    ipv4_addr=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n 1)
+    ipv6_addr=$(ip -6 addr show | grep -oP '(?<=inet6\s)[\da-f:]+' | head -n 1)
+    
+    if [ ! -z "$ipv4_addr" ]; then
+        iptables -t nat -A POSTROUTING -s $ipv4_addr -j SNAT --to-source $ipv4_addr
+        iptables -t nat -A PREROUTING -d $ipv4_addr -j DNAT --to-destination $ipv4_addr
+    fi
+    
+    if [ ! -z "$ipv6_addr" ]; then
+        ip6tables -t nat -A POSTROUTING -s $ipv6_addr -j SNAT --to-source $ipv6_addr
+        ip6tables -t nat -A PREROUTING -d $ipv6_addr -j DNAT --to-destination $ipv6_addr
+    fi
+
     iptables-save
     ip6tables-save
 
@@ -187,7 +203,6 @@ test_proxy_connectivity() {
     fi
 
     while IFS= read -r line; do
-        # 使用正则表达式解析行
         if [[ $line =~ ^(.+):([0-9]+):(.+):(.+)$ ]]; then
             ip="${BASH_REMATCH[1]}"
             port="${BASH_REMATCH[2]}"
@@ -196,12 +211,10 @@ test_proxy_connectivity() {
             
             echo "正在测试 $ip:$port..."
             
-            # 检查是否为IPv6地址，并添加方括号
             if [[ $ip == *:* ]]; then
                 ip="[$ip]"
             fi
 
-            # 使用 curl 进行测试，并捕获详细的调试信息
             if curl -s --proxy socks5h://$user:$pass@$ip:$port http://httpbin.org/ip -o /dev/null; then
                 echo "$ip:$port 代理连接成功"
             else
@@ -235,10 +248,8 @@ setup_bandwidth_control() {
     get_active_interfaces
     get_active_ip_count
 
-    # 提示用户输入总带宽
     read -p "请输入VPS的总带宽（例如50M）: " total_bandwidth
 
-    # 确保输入的带宽格式正确
     if [[ ! $total_bandwidth =~ ^[0-9]+M$ ]]; then
         echo "ERROR: 输入格式错误，请输入类似'50M'的格式。"
         return 1
@@ -249,12 +260,11 @@ setup_bandwidth_control() {
         return 0
     fi
 
-    # 动态计算每个IP的带宽
     local rate=$(echo "${total_bandwidth%M} / $active_ip_count" | bc)Mbit
 
     echo "INFO: 设置带宽控制..."
     for interface in $interfaces; do
-        tc qdisc del dev $interface root 2>/dev/null  # 删除已有的qdisc配置
+        tc qdisc del dev $interface root 2>/dev/null
         tc qdisc add dev $interface root handle 1: htb default 30
         tc class add dev $interface parent 1: classid 1:1 htb rate $total_bandwidth
 
@@ -272,20 +282,16 @@ setup_bandwidth_control() {
 enable_bbr() {
     echo "启用BBR..."
     
-    # 检查当前内核是否支持BBR
     if ! sysctl net.ipv4.tcp_available_congestion_control | grep -q "bbr"; then
         echo "当前内核不支持BBR，请升级内核。"
         return 1
     fi
 
-    # 设置BBR为默认拥塞控制算法
     echo "net.core.default_qdisc=fq" | sudo tee -a /etc/sysctl.conf
     echo "net.ipv4.tcp_congestion_control=bbr" | sudo tee -a /etc/sysctl.conf
 
-    # 立即应用更改
     sudo sysctl -p
 
-    # 验证BBR是否启用
     if sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
         echo "BBR已成功启用。"
     else
@@ -294,76 +300,68 @@ enable_bbr() {
     return 0
 }
 
-# 随机选择未使用的IP地址
-select_random_ip() {
-    local available_ips=("$@")
-    local selected_ip
-
-    while [ ${#available_ips[@]} -gt 0 ]; do
-        local index=$((RANDOM % ${#available_ips[@]}))
-        selected_ip=${available_ips[$index]}
-        if [[ ! " ${used_ips[@]} " =~ " ${selected_ip} " ]]; then
-            used_ips+=("$selected_ip")
-            echo "$selected_ip"
-            return
-        fi
-        unset available_ips[$index]
-        available_ips=("${available_ips[@]}")
-    done
-
-    echo "No available IPs left, reusing IPs."
-    used_ips=()
-    select_random_ip "$@"
-}
-
 # 设置IP进出策略
 set_ip_strategy() {
+    # 清除现有规则
+    iptables -t nat -F
+    ip6tables -t nat -F
+    
+    # 获取IPv4和IPv6地址
+    ipv4_addr=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n 1)
+    ipv6_addr=$(ip -6 addr show | grep -oP '(?<=inet6\s)[\da-f:]+' | head -n 1)
+    
+    echo "当前IPv4地址: $ipv4_addr"
+    echo "当前IPv6地址: $ipv6_addr"
+    
     echo "请选择IP进出策略："
-    echo "1. 同IP进同IP出"
-    echo "2. 一个IP进，随机IPv4出"
-    echo "3. 一个IPv4进，随机IPv6出"
+    echo "1. 同IP进同IP出 (IPv4进IPv4出，IPv6进IPv6出)"
+    echo "2. IPv4进IPv4出"
+    echo "3. IPv4进IPv6出"
     read -p "请输入选项 [1-3]: " strategy
 
-    local ips=($(hostname -I))
-    used_ips=()
     case $strategy in
         1)
             echo "设置同IP进同IP出..."
-            for ip in "${ips[@]}"; do
-                if [[ $ip == *:* ]]; then
-                    ip6tables -t nat -A POSTROUTING -s $ip -j SNAT --to-source $ip
-                    ip6tables -t nat -A PREROUTING -d $ip -j DNAT --to-destination $ip
-                else
-                    iptables -t nat -A POSTROUTING -s $ip -j SNAT --to-source $ip
-                    iptables -t nat -A PREROUTING -d $ip -j DNAT --to-destination $ip
-                fi
-            done
+            if [ ! -z "$ipv4_addr" ]; then
+                iptables -t nat -A POSTROUTING -s $ipv4_addr -j SNAT --to-source $ipv4_addr
+                iptables -t nat -A PREROUTING -d $ipv4_addr -j DNAT --to-destination $ipv4_addr
+            fi
+            if [ ! -z "$ipv6_addr" ]; then
+                ip6tables -t nat -A POSTROUTING -s $ipv6_addr -j SNAT --to-source $ipv6_addr
+                ip6tables -t nat -A PREROUTING -d $ipv6_addr -j DNAT --to-destination $ipv6_addr
+            fi
             ;;
         2)
-            echo "设置一个IP进，随机IPv4出..."
-            for ip in "${ips[@]}"; do
-                if [[ $ip != *:* ]]; then
-                    random_ip=$(select_random_ip "${ips[@]}")
-                    iptables -t nat -A POSTROUTING -s $ip -j SNAT --to-source $random_ip
-                fi
-            done
+            echo "设置IPv4进IPv4出..."
+            if [ ! -z "$ipv4_addr" ]; then
+                iptables -t nat -A POSTROUTING -j SNAT --to-source $ipv4_addr
+                iptables -t nat -A PREROUTING -d $ipv4_addr -j DNAT --to-destination $ipv4_addr
+            fi
             ;;
         3)
-            echo "设置一个IPv4进，随机IPv6出..."
-            for ip in "${ips[@]}"; do
-                if [[ $ip != *:* ]]; then
-                    random_ip=$(select_random_ip "${ips[@]}")
-                    ip6tables -t nat -A POSTROUTING -j SNAT --to-source $random_ip
-                fi
-            done
+            echo "设置IPv4进IPv6出..."
+            if [ ! -z "$ipv4_addr" ] && [ ! -z "$ipv6_addr" ]; then
+                iptables -t nat -A POSTROUTING -s $ipv4_addr -j SNAT --to-source $ipv6_addr
+                ip6tables -t nat -A PREROUTING -d $ipv6_addr -j DNAT --to-destination $ipv4_addr
+            fi
             ;;
         *)
-            echo "无效选项，请输入1-3之间的数字"
+            echo "无效选项，保持当前设置"
+            return 1
             ;;
     esac
 
+    # 保存规则
     iptables-save
     ip6tables-save
+    
+    echo "IP策略设置完成。"
+    echo "当前规则："
+    echo "IPv4规则："
+    iptables -t nat -L -n -v
+    echo "IPv6规则："
+    ip6tables -t nat -L -n -v
+    
     return 0
 }
 
@@ -400,5 +398,5 @@ detect_system
 check_and_install_iptables
 while true; do
     show_menu
-    sleep 60  # 每分钟检查和调整一次
+    sleep 60
 done
