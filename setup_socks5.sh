@@ -246,13 +246,6 @@ configure_xray() {
         "access": "/var/log/xray/access.log",
         "error": "/var/log/xray/error.log"
     },
-EOF
-    
-    # 继续添加入站和出站配置...
-    # 由于内容较长，我会在下一部分继续
-        # 继续 configure_xray 函数
-    # 添加入站配置
-    cat <<EOF >> /etc/xray/serve.toml
     "inbounds": [
 EOF
 
@@ -284,6 +277,28 @@ EOF
 EOF
     done
 
+    cat <<EOF >> /etc/xray/serve.toml
+    ],
+    "outbounds": [
+        {
+            "protocol": "freedom",
+            "settings": {}
+        }
+    ]
+}
+EOF
+
+    log "Xray配置已完成"
+    
+    # 验证配置
+    if ! check_config; then
+        return 1
+    fi
+    
+    # 重启服务
+    systemctl restart xray
+    return 0
+}
     # 添加出站配置
     cat <<EOF >> /etc/xray/serve.toml
     ],
