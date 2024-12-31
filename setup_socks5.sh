@@ -190,27 +190,36 @@ setup_bandwidth_control() {
     get_active_interfaces
     get_active_ip_count
 
-    local total_bandwidth="50Mbit"  # 假设的总带宽，实际应根据VPS的带宽设置
-    if [ "$active_ip_count" -eq 0 ]; then
-        echo "没有活动的IP，跳过带宽设置。"
+    # 提示用户输入总带宽
+    read -p "请输入VPS的总带宽（例如50M）: " total_bandwidth
+
+    # 确保输入的带宽格式正确
+    if [[ ! $total_bandwidth =~ ^[0-9]+M$ ]]; then
+        log "ERROR" "输入格式错误，请输入类似'50M'的格式。"
         return
     fi
 
-    local rate=$(echo "$total_bandwidth / $active_ip_count" | bc)  # 动态计算每个IP的带宽
+    if [ "$active_ip_count" -eq 0 ]; then
+        log "INFO" "没有活动的IP，跳过带宽设置。"
+        return
+    fi
 
-    echo "设置带宽控制..."
+    # 动态计算每个IP的带宽
+    local rate=$(echo "${total_bandwidth%M} / $active_ip_count" | bc)Mbit
+
+    log "INFO" "设置带宽控制..."
     for interface in $interfaces; do
         tc qdisc del dev $interface root 2>/dev/null  # 删除已有的qdisc配置
         tc qdisc add dev $interface root handle 1: htb default 30
         tc class add dev $interface parent 1: classid 1:1 htb rate $total_bandwidth
 
         for ip in $(hostname -I); do
-            tc class add dev $interface parent 1:1 classid 1:10 htb rate ${rate}Mbit ceil ${rate}Mbit
+            tc class add dev $interface parent 1:1 classid 1:10 htb rate ${rate} ceil ${rate}
             tc filter add dev $interface protocol ip parent 1:0 prio 1 u32 match ip dst $ip flowid 1:10
         done
     done
 
-    echo "带宽控制设置完成。"
+    log "INFO" "带宽控制设置完成。"
 }
 
 # 启用BBR
