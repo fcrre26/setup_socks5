@@ -61,14 +61,16 @@ setup_environment() {
     iptables -F
     iptables -X
 
-    # 添加SNAT和DNAT规则
-    local ips=($(hostname -I))
-    for ip in "${ips[@]}"; do
-        iptables -t nat -A POSTROUTING -s $ip -j SNAT --to-source $ip
-        iptables -t nat -A PREROUTING -d $ip -j DNAT --to-destination $ip
-    done
+    ip6tables -P INPUT ACCEPT
+    ip6tables -P FORWARD ACCEPT
+    ip6tables -P OUTPUT ACCEPT
+    ip6tables -t nat -F
+    ip6tables -t mangle -F
+    ip6tables -F
+    ip6tables -X
 
     iptables-save
+    ip6tables-save
 
     install_xray
     echo "创建Xray服务文件..."
@@ -158,7 +160,12 @@ clear_proxy_rules() {
     iptables -X
     iptables -t nat -F
     iptables -t mangle -F
+    ip6tables -F
+    ip6tables -X
+    ip6tables -t nat -F
+    ip6tables -t mangle -F
     iptables-save
+    ip6tables-save
     rm -f /root/proxy_list.txt
     echo "已清除所有代理规则，回到未安装SOCKS5代理的状态。"
 }
@@ -256,28 +263,102 @@ enable_bbr() {
     fi
 }
 
+# 随机选择未使用的IP地址
+select_random_ip() {
+    local available_ips=("$@")
+    local selected_ip
+
+    while [ ${#available_ips[@]} -gt 0 ]; do
+        local index=$((RANDOM % ${#available_ips[@]}))
+        selected_ip=${available_ips[$index]}
+        if [[ ! " ${used_ips[@]} " =~ " ${selected_ip} " ]]; then
+            used_ips+=("$selected_ip")
+            echo "$selected_ip"
+            return
+        fi
+        unset available_ips[$index]
+        available_ips=("${available_ips[@]}")
+    done
+
+    echo "No available IPs left, reusing IPs."
+    used_ips=()
+    select_random_ip "$@"
+}
+
+# 设置IP进出策略
+set_ip_strategy() {
+    echo "请选择IP进出策略："
+    echo "1. 同IP进同IP出"
+    echo "2. 一个IP进，随机IPv4出"
+    echo "3. 一个IPv4进，随机IPv6出"
+    read -p "请输入选项 [1-3]: " strategy
+
+    local ips=($(hostname -I))
+    used_ips=()
+    case $strategy in
+        1)
+            echo "设置同IP进同IP出..."
+            for ip in "${ips[@]}"; do
+                if [[ $ip == *:* ]]; then
+                    ip6tables -t nat -A POSTROUTING -s $ip -j SNAT --to-source $ip
+                    ip6tables -t nat -A PREROUTING -d $ip -j DNAT --to-destination $ip
+                else
+                    iptables -t nat -A POSTROUTING -s $ip -j SNAT --to-source $ip
+                    iptables -t nat -A PREROUTING -d $ip -j DNAT --to-destination $ip
+                fi
+            done
+            ;;
+        2)
+            echo "设置一个IP进，随机IPv4出..."
+            for ip in "${ips[@]}"; do
+                if [[ $ip != *:* ]]; then
+                    random_ip=$(select_random_ip "${ips[@]}")
+                    iptables -t nat -A POSTROUTING -s $ip -j SNAT --to-source $random_ip
+                fi
+            done
+            ;;
+        3)
+            echo "设置一个IPv4进，随机IPv6出..."
+            for ip in "${ips[@]}"; do
+                if [[ $ip == *:* ]]; then
+                    random_ip=$(select_random_ip "${ips[@]}")
+                    ip6tables -t nat -A POSTROUTING -j SNAT --to-source $random_ip
+                fi
+            done
+            ;;
+        *)
+            echo "无效选项，请输入1-3之间的数字"
+            ;;
+    esac
+
+    iptables-save
+    ip6tables-save
+}
+
 # 菜单模块
 show_menu() {
     echo "请选择要执行的操作："
     echo "1. 环境配置"
     echo "2. SOCKS5代理设置"
-    echo "3. 显示代理列表"  # 修改此行
+    echo "3. 显示代理列表"
     echo "4. 清除所有代理规则"
     echo "5. 测试代理连通性"
     echo "6. 设置带宽控制"
     echo "7. 启用BBR"
-    echo "8. 退出"
-    read -p "请输入选项 [1-8]: " option
+    echo "8. 设置IP进出策略"
+    echo "9. 退出"
+    read -p "请输入选项 [1-9]: " option
     case $option in
         1) setup_environment ;;
         2) set_socks5_credentials ;;
-        3) cat /root/proxy_list.txt ;;  # 修改此行，直接显示代理列表
+        3) cat /root/proxy_list.txt ;;
         4) clear_proxy_rules ;;
         5) test_proxy_connectivity "${socks_port}" "${socks_user}" "${socks_pass}" ;;
         6) setup_bandwidth_control ;;
         7) enable_bbr ;;
-        8) echo "退出脚本。"; exit ;;
-        *) echo "无效选项，请输入1-8之间的数字" ;;
+        8) set_ip_strategy ;;
+        9) echo "退出脚本。"; exit ;;
+        *) echo "无效选项，请输入1-9之间的数字" ;;
     esac
 }
 
