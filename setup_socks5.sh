@@ -194,16 +194,13 @@ test_proxy_connectivity() {
             user="${BASH_REMATCH[3]}"
             pass="${BASH_REMATCH[4]}"
             
-            echo "正在测试 $ip:$port..."
-            
             # 检查是否为IPv6地址，并添加方括号
             if [[ $ip == *:* ]]; then
                 ip="[$ip]"
             fi
 
             # 使用 curl 进行测试，并捕获详细的调试信息
-            curl -v -x socks5h://$user:$pass@$ip:$port http://httpbin.org/ip
-            if [ $? -eq 0 ]; then
+            if curl -s -x socks5h://$user:$pass@$ip:$port http://httpbin.org/ip > /dev/null; then
                 echo "$ip:$port 代理连接成功"
             else
                 echo "$ip:$port 代理连接失败"
