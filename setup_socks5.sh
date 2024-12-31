@@ -26,6 +26,31 @@ detect_system() {
     fi
 }
 
+# 检测并安装 unzip
+check_and_install_unzip() {
+    if ! command -v unzip &> /dev/null; then
+        echo "未安装unzip，正在安装..."
+        if [ "$ID" == "centos" ]; then
+            sudo yum install unzip -y
+        else
+            sudo apt-get install unzip -y
+        fi
+    fi
+}
+
+# 检测并安装防火墙
+check_and_install_iptables() {
+    if ! command -v iptables &> /dev/null; then
+        echo "未安装iptables，正在安装..."
+        if [ "$ID" == "centos" ]; then
+            sudo yum install iptables-services -y
+            sudo systemctl enable iptables
+        else
+            sudo apt-get install iptables-persistent -y
+        fi
+    fi
+}
+
 # 环境配置
 setup_environment() {
     echo "设置防火墙规则..."
@@ -64,6 +89,7 @@ EOF
 install_xray() {
     echo "正在从GitHub下载Xray..."
     # 请确保使用正确的链接，以下链接仅为示例，您需要检查最新版本的链接
+    check_and_install_unzip
     wget --no-check-certificate -O /usr/local/bin/xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
     unzip /usr/local/bin/xray.zip -d /usr/local/bin
     rm /usr/local/bin/xray.zip # 清理下载的zip文件
@@ -124,25 +150,65 @@ generate_proxy_list() {
     echo "代理列表文件已生成：/root/proxy_list.txt"
 }
 
+# 清除所有代理规则
+clear_proxy_rules() {
+    echo "清除所有代理规则..."
+    # 停止并禁用Xray服务
+    $service_manager stop xray
+    $service_manager disable xray
+    # 删除Xray配置文件和服务文件
+    rm -f /etc/xray/serve.toml
+    rm -f /etc/systemd/system/xray.service
+    # 清空iptables规则
+    iptables -F
+    iptables -X
+    iptables -t nat -F
+    iptables -t mangle -F
+    iptables-save
+    # 删除代理列表文件
+    rm -f /root/proxy_list.txt
+    echo "已清除所有代理规则，回到未安装SOCKS5代理的状态。"
+}
+
+# 测试代理连通性
+test_proxy_connectivity() {
+    echo "测试代理连通性..."
+    local socks_port=$1
+    local socks_user=$2
+    local socks_pass=$3
+    local ips=($(hostname -I))
+    for ip in "${ips[@]}"; do
+        echo "正在测试 $ip:$socks_port..."
+        # 使用 curl 测试代理连通性，这里以 httpbin.org 为例
+        curl -x socks5h://$socks_user:$socks_pass@$ip:$socks_port http://httpbin.org/ip
+    done
+    echo "代理连通性测试完成。"
+}
+
 # 菜单函数
 show_menu() {
     echo "请选择要执行的操作："
     echo "1. 环境配置"
     echo "2. SOCKS5代理设置"
     echo "3. 代理列表"
-    echo "4. 退出"
-    read -p "请输入选项 [1-4]: " option
+    echo "4. 清除所有代理规则"
+    echo "5. 测试代理连通性"
+    echo "6. 退出"
+    read -p "请输入选项 [1-6]: " option
     case $option in
         1) setup_environment ;;
         2) set_socks5_credentials ;;
         3) show_proxy_details ;;
-        4) echo "退出脚本。"; exit ;;
-        *) echo "无效选项，请输入1-4之间的数字" ;;
+        4) clear_proxy_rules ;;
+        5) test_proxy_connectivity "${socks_port}" "${socks_user}" "${socks_pass}" ;;
+        6) echo "退出脚本。"; exit ;;
+        *) echo "无效选项，请输入1-6之间的数字" ;;
     esac
 }
 
 # 主程序
 detect_system
+check_and_install_iptables
 while true; do
     show_menu
 done
