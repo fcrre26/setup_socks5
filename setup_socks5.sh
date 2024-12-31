@@ -188,6 +188,12 @@ test_proxy_connectivity() {
 
     while IFS=: read -r ip port user pass; do
         echo "正在测试 $ip:$port..."
+        
+        # 检查是否为IPv6地址，并添加方括号
+        if [[ $ip == *:* ]]; then
+            ip="[$ip]"
+        fi
+
         # 使用 curl 进行测试，并捕获详细的调试信息
         curl -v -x socks5h://$user:$pass@$ip:$port http://httpbin.org/ip
         if [ $? -eq 0 ]; then
@@ -200,6 +206,7 @@ test_proxy_connectivity() {
     echo "代理连通性测试完成。"
     return 0
 }
+
 # 自动检测所有活动网络接口
 get_active_interfaces() {
     interfaces=$(ip -o link show | awk -F': ' '{print $2}' | grep -v 'lo')
