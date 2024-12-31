@@ -194,6 +194,8 @@ test_proxy_connectivity() {
             user="${BASH_REMATCH[3]}"
             pass="${BASH_REMATCH[4]}"
             
+            echo "正在测试 $ip:$port..."
+            
             # 检查是否为IPv6地址，并添加方括号
             if [[ $ip == *:* ]]; then
                 ip="[$ip]"
