@@ -62,33 +62,7 @@ setup_environment() {
     iptables -t mangle -F
     iptables -F
     iptables -X
-
-    ip6tables -P INPUT ACCEPT
-    ip6tables -P FORWARD ACCEPT
-    ip6tables -P OUTPUT ACCEPT
-    ip6tables -t nat -F
-    ip6tables -t mangle -F
-    ip6tables -F
-    ip6tables -X
-
-    # 设置默认IP策略
-    echo "设置默认IP策略..."
-    # 获取IPv4和IPv6地址
-    ipv4_addr=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n 1)
-    ipv6_addr=$(ip -6 addr show | grep -oP '(?<=inet6\s)[\da-f:]+' | head -n 1)
-    
-    if [ ! -z "$ipv4_addr" ]; then
-        iptables -t nat -A POSTROUTING -s $ipv4_addr -j SNAT --to-source $ipv4_addr
-        iptables -t nat -A PREROUTING -d $ipv4_addr -j DNAT --to-destination $ipv4_addr
-    fi
-    
-    if [ ! -z "$ipv6_addr" ]; then
-        ip6tables -t nat -A POSTROUTING -s $ipv6_addr -j SNAT --to-source $ipv6_addr
-        ip6tables -t nat -A PREROUTING -d $ipv6_addr -j DNAT --to-destination $ipv6_addr
-    fi
-
     iptables-save
-    ip6tables-save
 
     install_xray
     echo "创建Xray服务文件..."
@@ -112,6 +86,15 @@ EOF
     echo "环境配置完成。"
     return 0
 }
+
+install_xray() {
+    echo "下载Xray..."
+    wget -O /usr/local/bin/xray https://www.h1z1.xin/xray
+    chmod +x /usr/local/bin/xray
+    echo "Xray已下载并设置为可执行。"
+    return 0
+}
+
 
 install_xray() {
     echo "正在从GitHub下载Xray..."
@@ -146,18 +129,28 @@ configure_xray() {
 listen = "${ips[i]}"
 port = $1
 protocol = "socks"
-tag = "in$((i+1))"
-settings = { auth = "password", udp = true, accounts = [{ user = "$2", pass = "$3" }] }
+tag = "$((i+1))"
+[inbounds.settings]
+auth = "password"
+udp = true
+ip = "${ips[i]}"
+[[inbounds.settings.accounts]]
+user = "$2"
+pass = "$3"
+[[routing.rules]]
+type = "field"
+inboundTag = "$((i+1))"
+outboundTag = "$((i+1))"
 [[outbounds]]
-protocol = "freedom"
-tag = "out$((i+1))"
+sendThrough = "${ips[i]}" 
+protocol = "freedom" 
+tag = "$((i+1))"
 
 EOF
     done
     echo "Xray配置已完成。"
     return 0
 }
-
 # 代理管理模块
 generate_proxy_list() {
     local socks_port=$1
