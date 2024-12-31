@@ -186,6 +186,14 @@ test_proxy_connectivity() {
         return 1
     fi
 
+    # 检查 xray 服务状态
+    echo "检查 Xray 服务状态..."
+    if ! systemctl is-active --quiet xray; then
+        echo "错误: Xray 服务未运行"
+        systemctl status xray
+        return 1
+    fi
+
     while IFS= read -r line; do
         if [[ $line =~ ^(.+):([0-9]+):(.+):(.+)$ ]]; then
             ip="${BASH_REMATCH[1]}"
@@ -194,22 +202,51 @@ test_proxy_connectivity() {
             pass="${BASH_REMATCH[4]}"
             
             echo "正在测试 $ip:$port..."
+            echo "使用凭据: $user:$pass"
             
             if [[ $ip == *:* ]]; then
                 ip="[$ip]"
             fi
 
-            if curl -s --proxy socks5h://$user:$pass@$ip:$port http://httpbin.org/ip -o /dev/null; then
-                echo "$ip:$port 代理连接成功"
+            # 添加详细的 curl 输出
+            echo "尝试连接..."
+            curl_output=$(curl -v --proxy socks5h://$user:$pass@$ip:$port http://httpbin.org/ip 2>&1)
+            curl_status=$?
+
+            if [ $curl_status -eq 0 ]; then
+                echo "代理连接成功: $ip:$port"
+                echo "返回的 IP 信息:"
+                echo "$curl_output" | grep -A 2 "origin"
             else
-                echo "$ip:$port 代理连接失败"
+                echo "代理连接失败: $ip:$port"
+                echo "错误详情:"
+                echo "$curl_output"
+                
+                # 检查本地端口是否在监听
+                echo "检查端口 $port 是否在监听..."
+                if netstat -tuln | grep -q ":$port "; then
+                    echo "端口 $port 正在监听"
+                else
+                    echo "错误: 端口 $port 未在监听"
+                fi
+                
+                # 检查防火墙规则
+                echo "检查防火墙规则..."
+                iptables -L -n | grep $port
             fi
+            
+            echo "----------------------------"
         else
             echo "行格式不正确: $line"
         fi
     done < /root/proxy_list.txt
 
     echo "代理连通性测试完成。"
+    
+    # 显示 Xray 日志
+    echo "最近的 Xray 日志:"
+    journalctl -u xray --no-pager -n 50
+    
     return 0
 }
 
