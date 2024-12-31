@@ -288,6 +288,11 @@ enable_bbr() {
 set_ip_strategy() {
     echo "配置IP进出策略..."
     
+    # 创建追踪目录和文件
+    mkdir -p /etc/xray/track
+    touch /etc/xray/track/ipv4_used.txt
+    touch /etc/xray/track/ipv6_used.txt
+    
     # 获取IPv4和IPv6地址列表
     ipv4_addrs=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}'))
     ipv6_addrs=($(ip -6 addr show | grep -oP '(?<=inet6\s)[\da-f:]+' | grep -v '^fe80'))
@@ -295,13 +300,8 @@ set_ip_strategy() {
     echo "当前IPv4地址: ${ipv4_addrs[@]}"
     echo "当前IPv6地址: ${ipv6_addrs[@]}"
     
-    # 创建地址使用追踪文件
-    mkdir -p /etc/xray/track
-    touch /etc/xray/track/ipv4_used.txt
-    touch /etc/xray/track/ipv6_used.txt
-    
     echo "请选择IP进出策略："
-    echo "1. 同IP进同IP出"
+    echo "1. 同IP进同IP出（默认）"
     echo "2. IPv4进随机IPv4出（不重复直到耗尽）"
     echo "3. IPv4进随机IPv6出（不重复直到耗尽）"
     read -p "请输入选项 [1-3]: " strategy
@@ -320,211 +320,196 @@ set_ip_strategy() {
 listen = "${ips[i]}"
 port = $socks_port
 protocol = "socks"
-tag = "in_$((i+1))"
-[inbounds.settings]
-auth = "password"
-udp = true
-ip = "${ips[i]}"
-[[inbounds.settings.accounts]]
-user = "$socks_user"
-pass = "$socks_pass"
+tag = "in$((i+1))"
+settings = { auth = "password", udp = true, accounts = [{ user = "$socks_user", pass = "$socks_pass" }] }
+[[outbounds]]
+protocol = "freedom"
+tag = "out$((i+1))"
+settings = { domainStrategy = "UseIPv4" }
+sendThrough = "${ips[i]}"
 [[routing.rules]]
 type = "field"
-inboundTag = "in_$((i+1))"
-outboundTag = "out_$((i+1))"
-[[outbounds]]
-sendThrough = "${ips[i]}" 
-protocol = "freedom" 
-tag = "out_$((i+1))"
+inboundTag = "in$((i+1))"
+outboundTag = "out$((i+1))"
 
 EOF
             done
             ;;
         2)
             echo "设置IPv4进随机IPv4出..."
-            # 创建地址选择脚本
-            cat <<'EOF' > /etc/xray/track/select_ip.sh
+            # 创建IP选择脚本
+            cat <<'EOF' > /etc/xray/track/select_next_ip.sh
 #!/bin/bash
 TRACK_DIR="/etc/xray/track"
 IPV4_USED="$TRACK_DIR/ipv4_used.txt"
 
-select_unused_ipv4() {
-    local all_ips=($@)
-    local used_ips=($(cat "$IPV4_USED" 2>/dev/null))
+# 获取下一个未使用的IP
+get_next_ip() {
+    local ip_type=$1
+    local used_file="$TRACK_DIR/${ip_type}_used.txt"
+    local all_ips=($2)
     
-    # 如果所有地址都已使用，清空使用记录
-    if [ ${#used_ips[@]} -ge ${#all_ips[@]} ]; then
-        echo -n "" > "$IPV4_USED"
+    # 读取已使用的IP
+    local used_ips
+    if [ -f "$used_file" ]; then
+        mapfile -t used_ips < "$used_file"
+    else
         used_ips=()
     fi
     
-    # 从未使用的地址中随机选择
+    # 如果所有IP都已使用，清空记录
+    if [ ${#used_ips[@]} -ge ${#all_ips[@]} ]; then
+        echo -n "" > "$used_file"
+        used_ips=()
+    fi
+    
+    # 查找未使用的IP
     for ip in "${all_ips[@]}"; do
-        if [[ ! " ${used_ips[@]} " =~ " ${ip} " ]]; then
-            echo "$ip" >> "$IPV4_USED"
+        if [[ ! " ${used_ips[*]} " =~ " ${ip} " ]]; then
+            echo "$ip" >> "$used_file"
             echo "$ip"
-            exit 0
+            return 0
         fi
     done
 }
 
-select_unused_ipv4 "${@}"
+# 获取所有IPv4地址
+all_ipv4=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}'))
+next_ip=$(get_next_ip "ipv4" "${all_ipv4[*]}")
+echo "$next_ip"
 EOF
-            chmod +x /etc/xray/track/select_ip.sh
+            chmod +x /etc/xray/track/select_next_ip.sh
 
-            # IPv4入站配置
+            # 配置入站
             for ipv4 in "${ipv4_addrs[@]}"; do
                 cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 listen = "$ipv4"
 port = $socks_port
 protocol = "socks"
-tag = "in_${ipv4}"
-[inbounds.settings]
-auth = "password"
-udp = true
-ip = "$ipv4"
-[[inbounds.settings.accounts]]
-user = "$socks_user"
-pass = "$socks_pass"
+tag = "in_$ipv4"
+settings = { auth = "password", udp = true, accounts = [{ user = "$socks_user", pass = "$socks_pass" }] }
 
 EOF
             done
-            
-            # 添加出站配置
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
-[[outbounds]]
-sendThrough = "$ipv4"
-protocol = "freedom"
-tag = "out_${ipv4}"
 
-EOF
-            done
-            
-            # 添加随机路由规则
+            # 配置出站（使用脚本选择IP）
+            next_ip=$(/etc/xray/track/select_next_ip.sh)
             cat <<EOF >> /etc/xray/serve.toml
+[[outbounds]]
+protocol = "freedom"
+tag = "out"
+settings = { domainStrategy = "UseIPv4" }
+sendThrough = "$next_ip"
 [[routing.rules]]
 type = "field"
-inboundTag = ["in_${ipv4_addrs[0]}"]
-balancerTag = "ipv4_balancer"
+network = "tcp,udp"
+outboundTag = "out"
 
-[[routing.balancers]]
-tag = "ipv4_balancer"
-selector = ["out_${ipv4_addrs[@]}"]
-strategy = "leastping"
 EOF
             ;;
         3)
             echo "设置IPv4进随机IPv6出..."
-            # 创建IPv6地址选择脚本
-            cat <<'EOF' > /etc/xray/track/select_ipv6.sh
+            # 修改IP选择脚本以支持IPv6
+            cat <<'EOF' > /etc/xray/track/select_next_ipv6.sh
 #!/bin/bash
 TRACK_DIR="/etc/xray/track"
 IPV6_USED="$TRACK_DIR/ipv6_used.txt"
 
-select_unused_ipv6() {
-    local all_ips=($@)
-    local used_ips=($(cat "$IPV6_USED" 2>/dev/null))
+# 获取下一个未使用的IPv6
+get_next_ipv6() {
+    local used_file="$IPV6_USED"
+    local all_ips=($1)
     
-    # 如果所有地址都已使用，清空使用记录
-    if [ ${#used_ips[@]} -ge ${#all_ips[@]} ]; then
-        echo -n "" > "$IPV6_USED"
+    # 读取已使用的IP
+    local used_ips
+    if [ -f "$used_file" ]; then
+        mapfile -t used_ips < "$used_file"
+    else
         used_ips=()
     fi
     
-    # 从未使用的地址中随机选择
+    # 如果所有IP都已使用，清空记录
+    if [ ${#used_ips[@]} -ge ${#all_ips[@]} ]; then
+        echo -n "" > "$used_file"
+        used_ips=()
+    fi
+    
+    # 查找未使用的IP
     for ip in "${all_ips[@]}"; do
-        if [[ ! " ${used_ips[@]} " =~ " ${ip} " ]]; then
-            echo "$ip" >> "$IPV6_USED"
+        if [[ ! " ${used_ips[*]} " =~ " ${ip} " ]]; then
+            echo "$ip" >> "$used_file"
             echo "$ip"
-            exit 0
+            return 0
         fi
     done
 }
 
-select_unused_ipv6 "${@}"
+# 获取所有IPv6地址
+all_ipv6=($(ip -6 addr show | grep -oP '(?<=inet6\s)[\da-f:]+' | grep -v '^fe80'))
+next_ip=$(get_next_ipv6 "${all_ipv6[*]}")
+echo "$next_ip"
 EOF
-            chmod +x /etc/xray/track/select_ipv6.sh
+            chmod +x /etc/xray/track/select_next_ipv6.sh
 
-            # IPv4入站配置
+            # 配置入站
             for ipv4 in "${ipv4_addrs[@]}"; do
                 cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 listen = "$ipv4"
 port = $socks_port
 protocol = "socks"
-tag = "in_${ipv4}"
-[inbounds.settings]
-auth = "password"
-udp = true
-ip = "$ipv4"
-[[inbounds.settings.accounts]]
-user = "$socks_user"
-pass = "$socks_pass"
+tag = "in_$ipv4"
+settings = { auth = "password", udp = true, accounts = [{ user = "$socks_user", pass = "$socks_pass" }] }
 
 EOF
             done
-            
-            # IPv6出站配置
-            for ipv6 in "${ipv6_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
-[[outbounds]]
-sendThrough = "$ipv6"
-protocol = "freedom"
-tag = "out_${ipv6}"
 
-EOF
-            done
-            
-            # 添加随机路由规则
+            # 配置出站（使用脚本选择IPv6）
+            next_ipv6=$(/etc/xray/track/select_next_ipv6.sh)
             cat <<EOF >> /etc/xray/serve.toml
+[[outbounds]]
+protocol = "freedom"
+tag = "out"
+settings = { domainStrategy = "UseIPv6" }
+sendThrough = "$next_ipv6"
 [[routing.rules]]
 type = "field"
-inboundTag = ["in_${ipv4_addrs[0]}"]
-balancerTag = "ipv6_balancer"
+network = "tcp,udp"
+outboundTag = "out"
 
-[[routing.balancers]]
-tag = "ipv6_balancer"
-selector = ["out_${ipv6_addrs[@]}"]
-strategy = "leastping"
 EOF
-            ;;
-        *)
-            echo "无效选项，保持当前设置"
-            return 1
             ;;
     esac
 
     # 重启 Xray 服务
     systemctl restart xray
     
+    # 设置定时任务以定期更新出口IP
+    if [ "$strategy" != "1" ]; then
+        # 创建更新脚本
+        cat <<'EOF' > /etc/xray/track/update_outbound.sh
+#!/bin/bash
+if [ -f /etc/xray/serve.toml ]; then
+    if grep -q "UseIPv6" /etc/xray/serve.toml; then
+        next_ip=$(/etc/xray/track/select_next_ipv6.sh)
+    else
+        next_ip=$(/etc/xray/track/select_next_ip.sh)
+    fi
+    sed -i "s/sendThrough = .*/sendThrough = \"$next_ip\"/" /etc/xray/serve.toml
+    systemctl restart xray
+fi
+EOF
+        chmod +x /etc/xray/track/update_outbound.sh
+
+        # 添加到crontab，每小时更新一次
+        (crontab -l 2>/dev/null; echo "0 * * * * /etc/xray/track/update_outbound.sh") | crontab -
+    fi
+
     echo "IP策略设置完成。"
     echo "正在检查 Xray 服务状态..."
+    sleep 2
     systemctl status xray
-    
-    # 创建定时任务来监控IP使用情况
-    cat <<'EOF' > /etc/xray/track/monitor_ip_usage.sh
-#!/bin/bash
-TRACK_DIR="/etc/xray/track"
-
-echo "IPv4 地址使用情况："
-echo "已使用：$(wc -l < $TRACK_DIR/ipv4_used.txt) 个"
-echo "使用记录："
-cat $TRACK_DIR/ipv4_used.txt
-
-echo -e "\nIPv6 地址使用情况："
-echo "已使用：$(wc -l < $TRACK_DIR/ipv6_used.txt) 个"
-echo "使用记录："
-cat $TRACK_DIR/ipv6_used.txt
-EOF
-    chmod +x /etc/xray/track/monitor_ip_usage.sh
-
-    # 添加到 crontab
-    (crontab -l 2>/dev/null; echo "*/5 * * * * /etc/xray/track/monitor_ip_usage.sh > /etc/xray/track/usage_report.txt") | crontab -
-
-    echo "已设置IP使用情况监控，每5分钟更新一次。"
-    echo "可以通过查看 /etc/xray/track/usage_report.txt 了解使用情况。"
     
     return 0
 }
