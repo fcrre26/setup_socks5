@@ -17,12 +17,12 @@ detect_system() {
                 ;;
             *)
                 echo "不支持的系统"
-                exit 1
+                return 1
                 ;;
         esac
     else
         echo "无法识别的系统"
-        exit 1
+        return 1
     fi
 }
 
@@ -36,6 +36,7 @@ check_and_install_unzip() {
             sudo apt-get install unzip -y
         fi
     fi
+    return 0
 }
 
 check_and_install_iptables() {
@@ -48,6 +49,7 @@ check_and_install_iptables() {
             sudo apt-get install iptables-persistent -y
         fi
     fi
+    return 0
 }
 
 # 环境配置模块
@@ -92,6 +94,7 @@ EOF
     $service_manager enable xray
     $service_manager start xray
     echo "环境配置完成。"
+    return 0
 }
 
 install_xray() {
@@ -102,6 +105,7 @@ install_xray() {
     rm /usr/local/bin/xray.zip
     chmod +x /usr/local/bin/xray
     echo "Xray已下载并设置为可执行。"
+    return 0
 }
 
 # 代理设置模块
@@ -112,6 +116,7 @@ set_socks5_credentials() {
     configure_xray "$socks_port" "$socks_user" "$socks_pass"
     generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
     echo "SOCKS5端口、用户名和密码设置完成。"
+    return 0
 }
 
 configure_xray() {
@@ -134,6 +139,7 @@ tag = "out$((i+1))"
 EOF
     done
     echo "Xray配置已完成。"
+    return 0
 }
 
 # 代理管理模块
@@ -148,6 +154,7 @@ generate_proxy_list() {
         echo "$ip:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
     done
     echo "代理列表文件已生成：/root/proxy_list.txt"
+    return 0
 }
 
 clear_proxy_rules() {
@@ -168,6 +175,7 @@ clear_proxy_rules() {
     ip6tables-save
     rm -f /root/proxy_list.txt
     echo "已清除所有代理规则，回到未安装SOCKS5代理的状态。"
+    return 0
 }
 
 test_proxy_connectivity() {
@@ -186,18 +194,21 @@ test_proxy_connectivity() {
         fi
     done
     echo "代理连通性测试完成。"
+    return 0
 }
 
 # 自动检测所有活动网络接口
 get_active_interfaces() {
     interfaces=$(ip -o link show | awk -F': ' '{print $2}' | grep -v 'lo')
     echo "检测到的活动网络接口: $interfaces"
+    return 0
 }
 
 # 获取当前活动的IP数量
 get_active_ip_count() {
     active_ip_count=$(ss -H -t state established | awk '{print $5}' | cut -d: -f1 | sort | uniq | wc -l)
     echo "当前活动的IP数量: $active_ip_count"
+    return 0
 }
 
 # 带宽管理模块
@@ -211,12 +222,12 @@ setup_bandwidth_control() {
     # 确保输入的带宽格式正确
     if [[ ! $total_bandwidth =~ ^[0-9]+M$ ]]; then
         echo "ERROR: 输入格式错误，请输入类似'50M'的格式。"
-        return
+        return 1
     fi
 
     if [ "$active_ip_count" -eq 0 ]; then
         echo "INFO: 没有活动的IP，跳过带宽设置。"
-        return
+        return 0
     fi
 
     # 动态计算每个IP的带宽
@@ -235,8 +246,8 @@ setup_bandwidth_control() {
     done
 
     echo "INFO: 带宽控制设置完成。"
+    return 0
 }
-
 
 # 启用BBR
 enable_bbr() {
@@ -245,7 +256,7 @@ enable_bbr() {
     # 检查当前内核是否支持BBR
     if ! sysctl net.ipv4.tcp_available_congestion_control | grep -q "bbr"; then
         echo "当前内核不支持BBR，请升级内核。"
-        return
+        return 1
     fi
 
     # 设置BBR为默认拥塞控制算法
@@ -261,6 +272,7 @@ enable_bbr() {
     else
         echo "BBR启用失败，请检查配置。"
     fi
+    return 0
 }
 
 # 随机选择未使用的IP地址
@@ -333,6 +345,7 @@ set_ip_strategy() {
 
     iptables-save
     ip6tables-save
+    return 0
 }
 
 # 菜单模块
@@ -360,6 +373,7 @@ show_menu() {
         9) echo "退出脚本。"; exit ;;
         *) echo "无效选项，请输入1-9之间的数字" ;;
     esac
+    return 0
 }
 
 # 主程序
