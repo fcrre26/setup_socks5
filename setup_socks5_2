@@ -180,8 +180,11 @@ add_ipv6_addresses() {
     declare -A GENERATED_ADDRESSES
     count=0
     while [ $count -lt $num ]; do
-        RANDOM_SUFFIX=$(generate_random_hex 16)
-        NEW_IPV6="${prefix}${RANDOM_SUFFIX}"
+        # 修改这里：生成4组4位的十六进制数
+        RANDOM_SUFFIX=$(for i in {1..4}; do printf "%04x:" $(($RANDOM % 65536)); done | sed 's/:$//')
+        # 确保prefix末尾只有一个冒号
+        prefix_cleaned=$(echo "$prefix" | sed 's/:*$//')
+        NEW_IPV6="${prefix_cleaned}:${RANDOM_SUFFIX}"
         
         if [ -z "${GENERATED_ADDRESSES[$NEW_IPV6]}" ]; then
             GENERATED_ADDRESSES[$NEW_IPV6]=1
