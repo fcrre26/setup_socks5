@@ -413,31 +413,62 @@ outboundTag = "random_ipv6_out"
 EOF
             ;;
 
-        4)  # IPv4进，不同端口对应固定IPv6出
-            # 获取可用的IPv6地址数量
-            local ipv6_count=${#ipv6_addrs[@]}
-            echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
+4)  # IPv4进，不同端口对应固定IPv6出
+    # 获取可用的IPv6地址数量
+    local ipv6_count=${#ipv6_addrs[@]}
+    echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
 
-            # 获取要配置的端口数量
-            read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
-            if ! [[ "$port_count" =~ ^[0-9]+$ ]] || [ "$port_count" -lt 1 ] || [ "$port_count" -gt "$ipv6_count" ]; then
-                echo -e "${RED}无效的端口数量${NC}"
-                return 1
-            fi
+    # 获取要配置的端口数量
+    while true; do
+        read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
+        if ! [[ "$port_count" =~ ^[0-9]+$ ]]; then
+            echo -e "${RED}请输入有效的数字${NC}"
+            continue
+        fi
 
-            # 为每个端口配置
-            for ((i = 0; i < port_count; i++)); do
-                local current_port=$((socks_port + i))
-                local current_ipv6=${ipv6_addrs[i]}
-                
-                # 为每个IPv4配置入站
-                for ((j = 0; j < ${#ipv4_addrs[@]}; j++)); do
-                    local current_ipv4=${ipv4_addrs[j]}
-                    cat <<EOF >> /etc/xray/serve.toml
+        if [ "$port_count" -gt "$ipv6_count" ]; then
+            echo -e "${RED}错误: 端口数量($port_count)不能超过可用的IPv6地址数量($ipv6_count)${NC}"
+            continue
+        fi
+
+        if [ "$port_count" -lt 1 ]; then
+            echo -e "${RED}错误: 端口数量必须大于0${NC}"
+            continue
+        fi
+        break
+    done
+
+    # 创建端口到IPv6的映射
+    declare -A port_ipv6_map
+    echo -e "\n${YELLOW}端口与IPv6地址的对应关系：${NC}"
+    
+    for ((i=0; i<port_count; i++)); do
+        current_port=$((socks_port + i))
+        current_ipv6=${ipv6_addrs[$i]}
+        port_ipv6_map[$current_port]=$current_ipv6
+        echo -e "${GREEN}端口 $current_port -> IPv6: $current_ipv6${NC}"
+    done
+
+    # 确认配置
+    read -p "确认使用以上配置？[y/N] " confirm
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}已取消配置${NC}"
+        return 1
+    fi
+
+    # 生成配置文件
+    for ((i=0; i<port_count; i++)); do
+        current_port=$((socks_port + i))
+        current_ipv6=${port_ipv6_map[$current_port]}
+        
+        # 为每个IPv4配置入站
+        for ((j=0; j < ${#ipv4_addrs[@]}; j++)); do
+            local current_ipv4=${ipv4_addrs[j]}
+            cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 port = $current_port
 protocol = "socks"
-tag = "in_tag_${i}_${j}"
+tag = "in_${current_port}_${j}"
 listen = "$current_ipv4"
 [inbounds.settings]
 auth = "password"
@@ -447,25 +478,25 @@ user = "$socks_user"
 pass = "$socks_pass"
 
 EOF
-                done
+        done
 
-                # 配置对应的IPv6出站
-                cat <<EOF >> /etc/xray/serve.toml
+        # 为每个端口配置对应的IPv6出站
+        cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
-tag = "out_tag_$i"
+tag = "out_${current_port}"
 [outbounds.settings]
 domainStrategy = "UseIPv6"
 sendThrough = "$current_ipv6"
 
 [[routing.rules]]
 type = "field"
-inboundTag = ["in_tag_${i}_0"$(for ((j = 1; j < ${#ipv4_addrs[@]}; j++)); do echo -n ", \"in_tag_${i}_${j}\""; done)]
-outboundTag = "out_tag_$i"
+inboundTag = ["in_${current_port}_0"$(for ((j=1; j<${#ipv4_addrs[@]}; j++)); do echo -n ", \"in_${current_port}_${j}\""; done)]
+outboundTag = "out_${current_port}"
 
 EOF
-            done
-            ;;
+    done
+    ;;
     esac
 
     # 检查配置文件
@@ -534,12 +565,17 @@ generate_proxy_list() {
         
         4)  # IPv4进不同端口对应固定IPv6出
             echo -e "# 策略：IPv4进不同端口对应固定IPv6出\n" >> /root/proxy_list.txt
-            for ((i = 0; i < port_count; i++)); do
+            
+            # 遍历每个端口
+            for ((i=0; i<port_count; i++)); do
                 current_port=$((socks_port + i))
-                current_ipv6=${ipv6_addrs[i]}
+                current_ipv6=${ipv6_addrs[$i]}
+                
                 echo -e "\n# 端口 $current_port 对应的IPv6出口: $current_ipv6" >> /root/proxy_list.txt
+                
+                # 为每个IPv4地址生成代理条目
                 for ipv4 in "${ipv4_addrs[@]}"; do
-                    echo "$ipv4:$current_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
+                    echo "$ipv4:$current_port:$socks_user:$socks_pass # 出口: $current_ipv6" >> /root/proxy_list.txt
                 done
             done
             ;;
