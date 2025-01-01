@@ -456,9 +456,6 @@ EOF
 # ... existing code ...
 
 4)  # IPv4进，不同端口对应固定IPv6出
-    # 先清理重复的配置部分
-    sed -i '/# 为每个端口配置出站规则/,/EOF/d' /etc/xray/serve.toml
-
     # 为每个端口配置入站和对应的出站
     for port in "${!port_map[@]}"; do
         ipv6=${port_map[$port]}
@@ -499,7 +496,6 @@ outboundTag = "out_${port}"
 EOF
     done
     ;;
-
 # ... existing code ...
 
     # 为每个端口配置出站规则
