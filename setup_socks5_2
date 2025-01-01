@@ -393,23 +393,22 @@ outboundTag = "out_random"
 EOF
             ;;
 
-       4)  # IPv4进，不同端口对应固定IPv6出
-    local tag_num=0
-    for port in "${!port_map[@]}"; do
-        ipv6=${port_map[$port]}
-        # 确保IPv6地址格式正确（移除CIDR前缀如果存在）
-        ipv6=$(echo "$ipv6" | cut -d'/' -f1)
-        
-        for ipv4 in "${ipv4_addrs[@]}"; do
-            cat <<EOF >> /etc/xray/serve.toml
+        4)  # IPv4进，不同端口对应固定IPv6出
+            local tag_num=0
+            for port in "${!port_map[@]}"; do
+                ipv6=${port_map[$port]}
+                ipv6=$(echo "$ipv6" | cut -d'/' -f1)
+                
+                for ipv4 in "${ipv4_addrs[@]}"; do
+                    cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 port = $port
 protocol = "socks"
-listen = "$ipv4"
 tag = "in_${tag_num}"
 [inbounds.settings]
 auth = "password"
 udp = true
+ip = "$ipv4"
 [[inbounds.settings.accounts]]
 user = "$socks_user"
 pass = "$socks_pass"
@@ -417,9 +416,7 @@ pass = "$socks_pass"
 [[outbounds]]
 protocol = "freedom"
 tag = "out_${tag_num}"
-[outbounds.settings]
-domainStrategy = "UseIPv6"
-sendThrough = "${ipv6}"
+sendThrough = "$ipv6"
 
 [[routing.rules]]
 type = "field"
@@ -427,11 +424,12 @@ inboundTag = ["in_${tag_num}"]
 outboundTag = "out_${tag_num}"
 
 EOF
-            ((tag_num++))
-        done
-    done
-    ;;
+                    ((tag_num++))
+                done
+            done
+            ;;
     esac
+}
 
     # 检查配置文件
     if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
