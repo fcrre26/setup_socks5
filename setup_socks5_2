@@ -157,7 +157,61 @@ get_ipv6_prefix() {
     echo $IPV6_PREFIX
 }
 
-# IPv6管理函数
+# 显示当前IPv6地址
+show_current_ipv6() {
+    local interface=$1
+    echo "当前IPv6地址列表："
+    # 使用 ip -6 addr show 命令显示所有IPv6地址
+    ip -6 addr show dev $interface | grep -v fe80 | grep inet6 | while read -r line; do
+        # 格式化输出，使其更易读
+        addr=$(echo $line | awk '{print $2}')
+        scope=$(echo $line | awk '{print $4}')
+        flags=$(echo $line | awk '{for(i=5;i<=NF;i++) printf "%s ",$i}')
+        echo -e "${GREEN}地址: $addr${NC}"
+        echo "  作用域: $scope"
+        echo "  标志: $flags"
+        echo "-------------------"
+    done
+
+    # 显示配置文件中的地址
+    if [ -f "/etc/network/interfaces.d/60-ipv6-addresses" ]; then
+        echo -e "\n配置文件中的IPv6地址："
+        grep "address" /etc/network/interfaces.d/60-ipv6-addresses | while read -r line; do
+            addr=$(echo $line | awk '{print $2}')
+            echo -e "${YELLOW}配置的地址: $addr${NC}"
+        done
+    fi
+}
+
+# 删除所有IPv6地址
+delete_all_ipv6() {
+    local interface=$1
+    echo "正在删除所有IPv6地址..."
+    
+    # 删除实际配置的地址
+    ip -6 addr show dev $interface | grep inet6 | grep -v fe80 | while read -r line; do
+        addr=$(echo $line | awk '{print $2}')
+        if ip -6 addr del $addr dev $interface 2>/dev/null; then
+            echo -e "${GREEN}已删除地址: $addr${NC}"
+        fi
+    done
+    
+    # 清除配置文件
+    if [ -f "/etc/network/interfaces.d/60-ipv6-addresses" ]; then
+        echo "清除IPv6配置文件..."
+        rm -f "/etc/network/interfaces.d/60-ipv6-addresses"
+        echo "已删除配置文件"
+    fi
+    
+    # 重启网络接口
+    echo "重启网络接口..."
+    ip link set dev $interface down
+    ip link set dev $interface up
+    
+    echo "所有IPv6地址已删除"
+}
+
+# 添加IPv6地址
 add_ipv6_addresses() {
     local interface=$1
     local prefix=$2
@@ -184,48 +238,26 @@ add_ipv6_addresses() {
         if [ -z "${GENERATED_ADDRESSES[$NEW_IPV6]}" ]; then
             GENERATED_ADDRESSES[$NEW_IPV6]=1
             
+            # 添加到配置文件
             echo "" >> $CONFIG_FILE
             echo "iface $interface inet6 static" >> $CONFIG_FILE
             echo "    address $NEW_IPV6" >> $CONFIG_FILE
             echo "    netmask 64" >> $CONFIG_FILE
             
             # 立即添加IPv6地址
-            ip -6 addr add $NEW_IPV6/64 dev $interface 2>/dev/null
-            
-            echo -e "${GREEN}已添加IPv6地址: $NEW_IPV6${NC}"
-            ((count++))
+            if ip -6 addr add $NEW_IPV6/64 dev $interface 2>/dev/null; then
+                echo -e "${GREEN}已添加IPv6地址: $NEW_IPV6${NC}"
+                ((count++))
+            else
+                echo -e "${RED}添加地址失败: $NEW_IPV6${NC}"
+            fi
         fi
     done
-}
-
-delete_all_ipv6() {
-    local interface=$1
     
-    # 删除配置文件
-    CONFIG_FILE="/etc/network/interfaces.d/60-ipv6-addresses"
-    if [ -f "$CONFIG_FILE" ]; then
-        rm -f "$CONFIG_FILE"
-        echo -e "${GREEN}已删除配置文件${NC}"
-    fi
-    
-    # 删除所有非本地IPv6地址
-    for addr in $(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}'); do
-        ip -6 addr del $addr dev $interface
-        echo -e "${YELLOW}已删除IPv6地址: $addr${NC}"
-    done
-    
-    echo -e "${GREEN}所有配置的IPv6地址已删除${NC}"
-}
-
-show_current_ipv6() {
-    local interface=$1
-    echo -e "${YELLOW}当前IPv6地址列表：${NC}"
-    local ipv6_list=$(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80")
-    if [ -z "$ipv6_list" ]; then
-        echo -e "${RED}未检测到任何IPv6地址${NC}"
-        return 1
-    fi
-    echo "$ipv6_list"
+    # 重启网络接口以应用更改
+    echo "正在重启网络接口以应用更改..."
+    ip link set dev $interface down
+    ip link set dev $interface up
 }
 
 # IPv6管理菜单
