@@ -294,6 +294,7 @@ EOF
 }
 
 # 生成代理列表
+# 生成代理列表
 generate_proxy_list() {
     local start_port=$1
     local type=$2
@@ -307,31 +308,30 @@ generate_proxy_list() {
     local port=$start_port
 
     case $strategy in
-        1) # 同IP进同IP出 - 每个IP一个端口
+        1) # 同IP进同IP出 - 所有IP使用相同端口
             for ip in "${IPV4_ADDRESSES[@]}"; do
                 if [ "$type" == "socks" ]; then
-                    echo "${ip}:${port}:${username}:${password}" >> /root/proxy_list.txt
+                    echo "${ip}:${start_port}:${username}:${password}" >> /root/proxy_list.txt
                 else
                     local vmess_json=$(jq -n \
                         --arg add "$ip" \
-                        --arg port "$port" \
+                        --arg port "$start_port" \
                         --arg id "$uuid" \
                         --arg path "$ws_path" \
                         '{v:"2",ps:"",add:$add,port:$port,id:$id,aid:"0",net:"ws",type:"",host:"",path:$path,tls:""}')
                     local vmess_encoded=$(echo -n "$vmess_json" | base64 -w0)
                     echo "vmess://$vmess_encoded" >> /root/proxy_list.txt
                 fi
-                ((port++))
             done
             ;;
             
         2) # IPv4进随机IPv4出 - 只用第一个IPv4地址
             if [ "$type" == "socks" ]; then
-                echo "${IPV4_ADDRESSES[0]}:${port}:${username}:${password}" >> /root/proxy_list.txt
+                echo "${IPV4_ADDRESSES[0]}:${start_port}:${username}:${password}" >> /root/proxy_list.txt
             else
                 local vmess_json=$(jq -n \
                     --arg add "${IPV4_ADDRESSES[0]}" \
-                    --arg port "$port" \
+                    --arg port "$start_port" \
                     --arg id "$uuid" \
                     --arg path "$ws_path" \
                     '{v:"2",ps:"",add:$add,port:$port,id:$id,aid:"0",net:"ws",type:"",host:"",path:$path,tls:""}')
@@ -342,11 +342,11 @@ generate_proxy_list() {
             
         3) # IPv4进随机IPv6出 - 只用第一个IPv4地址
             if [ "$type" == "socks" ]; then
-                echo "${IPV4_ADDRESSES[0]}:${port}:${username}:${password}" >> /root/proxy_list.txt
+                echo "${IPV4_ADDRESSES[0]}:${start_port}:${username}:${password}" >> /root/proxy_list.txt
             else
                 local vmess_json=$(jq -n \
                     --arg add "${IPV4_ADDRESSES[0]}" \
-                    --arg port "$port" \
+                    --arg port "$start_port" \
                     --arg id "$uuid" \
                     --arg path "$ws_path" \
                     '{v:"2",ps:"",add:$add,port:$port,id:$id,aid:"0",net:"ws",type:"",host:"",path:$path,tls:""}')
@@ -359,11 +359,11 @@ generate_proxy_list() {
             local ipv6_count=${#IPV6_ADDRESSES[@]}
             for ((i=0; i<ipv6_count; i++)); do
                 if [ "$type" == "socks" ]; then
-                    echo "${IPV4_ADDRESSES[0]}:$((port+i)):${username}:${password}" >> /root/proxy_list.txt
+                    echo "${IPV4_ADDRESSES[0]}:$((start_port+i)):${username}:${password}" >> /root/proxy_list.txt
                 else
                     local vmess_json=$(jq -n \
                         --arg add "${IPV4_ADDRESSES[0]}" \
-                        --arg port "$((port+i))" \
+                        --arg port "$((start_port+i))" \
                         --arg id "$uuid" \
                         --arg path "$ws_path" \
                         '{v:"2",ps:"",add:$add,port:$port,id:$id,aid:"0",net:"ws",type:"",host:"",path:$path,tls:""}')
@@ -377,7 +377,7 @@ generate_proxy_list() {
     echo -e "${GREEN}代理列表已生成：/root/proxy_list.txt${NC}"
     echo -e "${YELLOW}策略说明:${NC}"
     case $strategy in
-        1) echo "同IP进出: 每个入站IP使用相同的出站IP" ;;
+        1) echo "同IP进出: 所有入站IP使用相同端口 ${start_port}" ;;
         2) echo "随机IPv4出: 使用第一个IPv4地址入站,随机IPv4出站" ;;
         3) echo "随机IPv6出: 使用第一个IPv4地址入站,随机IPv6出站" ;;
         4) echo "固定IPv6出: 使用第一个IPv4地址入站,每个端口对应固定IPv6出站" ;;
