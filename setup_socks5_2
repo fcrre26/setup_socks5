@@ -216,6 +216,18 @@ add_ipv6_addresses() {
     # 显示最终结果
     echo -e "\n${YELLOW}更新后的IPv6地址:${NC}"
     ip -6 addr show dev $interface
+    
+    # 确保配置文件存在
+    if [ ! -f "/etc/network/interfaces" ]; then
+        echo "auto lo" > /etc/network/interfaces
+        echo "iface lo inet loopback" >> /etc/network/interfaces
+        echo "" >> /etc/network/interfaces
+    fi
+    
+    # 添加 source 指令（如果不存在）
+    if ! grep -q "source /etc/network/interfaces.d/\*" /etc/network/interfaces; then
+        echo "source /etc/network/interfaces.d/*" >> /etc/network/interfaces
+    fi
 }
     
     # 确保配置文件存在
