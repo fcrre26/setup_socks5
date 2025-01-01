@@ -693,33 +693,49 @@ ipv6_manager_menu() {
 # 主菜单
 show_menu() {
     echo -e "\n${YELLOW}=== 代理服务器管理工具 ===${NC}"
-    echo "1. 环境配置"
-    echo "2. SOCKS5代理设置"
-    echo "3. 显示代理列表"
-    echo "4. 清除所有代理规则"
-    echo "5. 测试代理连通性"
-    echo "6. 设置带宽控制"
-    echo "7. 启用BBR"
-    echo "8. 设置IP进出策略"
-    echo "9. IPv6地址管理"
+    echo "1. 环境配置（安装必要组件）"
+    echo "2. 启用BBR加速"
+    echo "3. IPv6地址管理"
+    echo "4. 设置带宽控制"
+    echo "5. SOCKS5代理设置"
+    echo "6. 设置IP进出策略"
+    echo "7. 测试代理连通性"
+    echo "8. 显示代理列表"
+    echo "9. 清除所有代理规则"
     echo "10. 退出"
     
     read -p "请输入选项 [1-10]: " option
     case $option in
         1) setup_environment ;;
-        2) set_socks5_credentials ;;
-        3) cat /root/proxy_list.txt ;;
-        4) clear_proxy_rules ;;
-        5) test_proxy_connectivity ;;
-        6) setup_bandwidth_control ;;
-        7) enable_bbr ;;
-        8) set_ip_strategy ;;
-        9) ipv6_manager_menu ;;
+        2) enable_bbr ;;
+        3) ipv6_manager_menu ;;
+        4) setup_bandwidth_control ;;
+        5) set_socks5_credentials ;;
+        6) set_ip_strategy ;;
+        7) test_proxy_connectivity ;;
+        8) cat /root/proxy_list.txt ;;
+        9) clear_proxy_rules ;;
         10) echo "退出脚本。"; exit ;;
         *) echo -e "${RED}无效选项，请输入1-10之间的数字${NC}" ;;
     esac
 }
 
+# 使用说明
+show_usage() {
+    echo -e "${YELLOW}=== 代理服务器配置流程 ===${NC}"
+    echo -e "推荐配置顺序："
+    echo -e "1. 环境配置 - 安装必要的软件包和服务"
+    echo -e "2. BBR加速 - 优化网络性能"
+    echo -e "3. IPv6管理 - 配置IPv6地址（可选）"
+    echo -e "4. 带宽控制 - 设置流量限制"
+    echo -e "5. SOCKS5设置 - 配置代理服务"
+    echo -e "6. IP策略 - 设置进出流量规则"
+    echo -e "7. 连通性测试 - 验证代理是否正常工作"
+    echo -e "${GREEN}提示：首次使用请按照顺序依次配置${NC}"
+    echo -e "${RED}注意：清除规则(选项9)会重置所有设置${NC}\n"
+}
+
+# 主程序
 # 主程序
 main() {
     # 检查root权限
@@ -732,6 +748,9 @@ main() {
     detect_system
     check_and_install_iptables
     check_ipv6
+
+    # 显示使用说明
+    show_usage
 
     # 主循环
     while true; do
