@@ -660,6 +660,152 @@ show_menu() {
     esac
 }
 
+# BBR加速模块
+enable_bbr() {
+    echo "正在启用BBR加速..."
+    
+    # 检查是否已经启用
+    if lsmod | grep -q bbr; then
+        echo -e "${YELLOW}BBR已经启用${NC}"
+        return 0
+    fi
+
+    # 启用BBR
+    echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
+    sysctl -p
+
+    # 验证是否启用成功
+    if lsmod | grep -q bbr; then
+        echo -e "${GREEN}BBR启用成功${NC}"
+    else
+        echo -e "${RED}BBR启用失败${NC}"
+        return 1
+    fi
+}
+
+# IPv6管理菜单
+ipv6_manager_menu() {
+    while true; do
+        echo -e "\n${YELLOW}IPv6地址管理工具${NC}"
+        echo "1. 添加随机IPv6地址"
+        echo "2. 删除所有IPv6地址"
+        echo "3. 显示当前IPv6地址"
+        echo "4. 返回主菜单"
+
+        read -p "请选择操作 [1-4]: " ipv6_option
+
+        case $ipv6_option in
+            1)
+                INTERFACE=$(get_main_interface)
+                if [ $? -ne 0 ]; then
+                    echo -e "${RED}获取网络接口失败${NC}"
+                    continue
+                fi
+
+                PREFIX=$(get_ipv6_prefix "$INTERFACE")
+                if [ $? -ne 0 ]; then
+                    continue
+                fi
+
+                read -p "请输入要添加的IPv6地址数量: " num_addresses
+                if [[ ! "$num_addresses" =~ ^[0-9]+$ ]]; then
+                    echo -e "${RED}请输入有效的数字${NC}"
+                    continue
+                fi
+
+                # 生成并添加IPv6地址
+                for ((i=0; i<num_addresses; i++)); do
+                    # 生成随机后缀
+                    suffix=$(printf "%04x:%04x:%04x:%04x" \
+                        $((RANDOM % 65536)) \
+                        $((RANDOM % 65536)) \
+                        $((RANDOM % 65536)) \
+                        $((RANDOM % 65536)))
+                    
+                    new_ipv6="${PREFIX%::}:${suffix}"
+                    
+                    if ip -6 addr add "$new_ipv6/64" dev "$INTERFACE" 2>/dev/null; then
+                        echo -e "${GREEN}成功添加IPv6地址: $new_ipv6${NC}"
+                    else
+                        echo -e "${RED}添加地址失败: $new_ipv6${NC}"
+                    fi
+                done
+                ;;
+            2)
+                INTERFACE=$(get_main_interface)
+                if [ $? -eq 0 ]; then
+                    # 删除所有非本地IPv6地址
+                    for addr in $(ip -6 addr show dev $INTERFACE | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}'); do
+                        ip -6 addr del $addr dev $INTERFACE
+                        echo -e "${YELLOW}已删除IPv6地址: $addr${NC}"
+                    done
+                    echo -e "${GREEN}所有IPv6地址已删除${NC}"
+                fi
+                ;;
+            3)
+                INTERFACE=$(get_main_interface)
+                if [ $? -eq 0 ]; then
+                    echo -e "${YELLOW}当前IPv6地址列表：${NC}"
+                    ip -6 addr show dev $INTERFACE | grep "inet6" | grep -v "fe80"
+                fi
+                ;;
+            4)
+                return
+                ;;
+            *)
+                echo -e "${RED}无效的选择${NC}"
+                ;;
+        esac
+
+        echo -e "\n按回车键继续..."
+        read
+    done
+}
+
+# 带宽控制模块
+setup_bandwidth_control() {
+    echo "设置带宽控制..."
+    
+    # 检查是否安装了必要工具
+    if ! command -v tc &> /dev/null; then
+        echo "安装流量控制工具..."
+        if [ "$ID" == "centos" ]; then
+            yum install -y iproute-tc
+        else
+            apt-get update && apt-get install -y iproute2
+        fi
+    fi
+
+    # 获取网络接口
+    INTERFACE=$(get_main_interface)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    # 清除现有的队列规则
+    tc qdisc del dev $INTERFACE root 2>/dev/null
+
+    # 设置带宽限制
+    read -p "请输入上传带宽限制(Mbps): " upload
+    read -p "请输入下载带宽限制(Mbps): " download
+
+    # 转换为kbps
+    upload=$((upload * 1024))
+    download=$((download * 1024))
+
+    # 应用带宽限制
+    tc qdisc add dev $INTERFACE root handle 1: htb default 10
+    tc class add dev $INTERFACE parent 1: classid 1:1 htb rate ${upload}kbit
+    tc class add dev $INTERFACE parent 1: classid 1:2 htb rate ${download}kbit
+
+    echo -e "${GREEN}带宽控制设置完成${NC}"
+    echo "上传限制: ${upload}kbit"
+    echo "下载限制: ${download}kbit"
+}
+
+
+
 # 主程序
 main() {
     # 检查root权限
