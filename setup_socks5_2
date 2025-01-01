@@ -198,6 +198,86 @@ add_ipv6_addresses() {
     done
 }
 
+delete_all_ipv6() {
+    local interface=$1
+    
+    # 删除配置文件
+    CONFIG_FILE="/etc/network/interfaces.d/60-ipv6-addresses"
+    if [ -f "$CONFIG_FILE" ]; then
+        rm -f "$CONFIG_FILE"
+        echo -e "${GREEN}已删除配置文件${NC}"
+    fi
+    
+    # 删除所有非本地IPv6地址
+    for addr in $(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}'); do
+        ip -6 addr del $addr dev $interface
+        echo -e "${YELLOW}已删除IPv6地址: $addr${NC}"
+    done
+    
+    echo -e "${GREEN}所有配置的IPv6地址已删除${NC}"
+}
+
+show_current_ipv6() {
+    local interface=$1
+    echo -e "${YELLOW}当前IPv6地址列表：${NC}"
+    local ipv6_list=$(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80")
+    if [ -z "$ipv6_list" ]; then
+        echo -e "${RED}未检测到任何IPv6地址${NC}"
+        return 1
+    fi
+    echo "$ipv6_list"
+}
+
+# IPv6管理菜单
+ipv6_manager_menu() {
+    while true; do
+        echo -e "\n${YELLOW}IPv6地址管理工具${NC}"
+        echo "1. 添加随机IPv6地址"
+        echo "2. 删除所有IPv6地址"
+        echo "3. 显示当前IPv6地址"
+        echo "4. 测试IPv6连通性"
+        echo "0. 返回主菜单"
+        
+        read -p "请选择操作 [0-4]: " ipv6_option
+        
+        case $ipv6_option in
+            1)
+                INTERFACE=$(get_main_interface)
+                PREFIX=$(get_ipv6_prefix $INTERFACE)
+                if [ $? -eq 0 ]; then
+                    read -p "请输入要添加的IPv6地址数量: " num_addresses
+                    if [[ "$num_addresses" =~ ^[0-9]+$ ]]; then
+                        add_ipv6_addresses $INTERFACE $PREFIX $num_addresses
+                    else
+                        echo -e "${RED}请输入有效的数字${NC}"
+                    fi
+                fi
+                ;;
+            2)
+                INTERFACE=$(get_main_interface)
+                delete_all_ipv6 $INTERFACE
+                ;;
+            3)
+                INTERFACE=$(get_main_interface)
+                show_current_ipv6 $INTERFACE
+                ;;
+            4)
+                INTERFACE=$(get_main_interface)
+                test_proxy_connectivity
+                ;;
+            0)
+                return
+                ;;
+            *)
+                echo -e "${RED}无效的选择${NC}"
+                ;;
+        esac
+        
+        echo -e "\n按回车键继续..."
+        read
+    done
+}
+
 # IP策略配置模块
 set_ip_strategy() {
     echo "配置IP进出策略..."
