@@ -528,37 +528,284 @@ set_proxy_config() {
     esac
 }
 
+# IP策略配置模块
+set_ip_strategy() {
+    echo "请选择IP进出策略："
+    echo "1. 同IP进同IP出（默认）"
+    echo "2. IPv4进随机IPv4出（不重复直到耗尽）"
+    echo "3. IPv4进随机IPv6出（不重复直到耗尽）"
+    echo "4. IPv4进，不同端口对应固定IPv6出（自动分配）"
+    read -p "请输入选项 [1-4]: " strategy
+
+    # 获取当前IPv4和IPv6地址
+    IPV4_ADDRESSES=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
+    IPV6_ADDRESSES=($(ip -6 addr show | grep "inet6" | grep "scope global" | grep -v "temporary" | awk '{print $2}' | cut -d'/' -f1))
+
+    mkdir -p /etc/xrayL/track
+
+    case $strategy in
+        1)  # 同IP进同IP出
+            config_same_ip_strategy
+            ;;
+        2)  # IPv4进随机IPv4出
+            config_random_ipv4_strategy
+            ;;
+        3)  # IPv4进随机IPv6出
+            config_random_ipv6_strategy
+            ;;
+        4)  # IPv4进固定IPv6出
+            config_fixed_ipv6_strategy
+            ;;
+        *)
+            echo -e "${RED}无效选择，使用默认策略（同IP进出）${NC}"
+            config_same_ip_strategy
+            ;;
+    esac
+}
+
+# 同IP进出策略
+config_same_ip_strategy() {
+    local config_content=""
+    for ip in "${IPV4_ADDRESSES[@]}"; do
+        config_content+=$(cat <<EOF
+[[inbounds]]
+listen = "$ip"
+port = $socks_port
+protocol = "socks"
+tag = "in_$ip"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+[[outbounds]]
+protocol = "freedom"
+tag = "out_$ip"
+[outbounds.settings]
+domainStrategy = "UseIPv4"
+sendThrough = "$ip"
+
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_$ip"]
+outboundTag = "out_$ip"
+
+EOF
+)
+    done
+    echo -e "$config_content" > /etc/xrayL/config.toml
+}
+
+# IPv4进随机IPv4出策略
+config_random_ipv4_strategy() {
+    # 创建IP选择脚本
+    cat <<'EOF' > /etc/xrayL/track/select_next_ipv4.sh
+#!/bin/bash
+TRACK_DIR="/etc/xrayL/track"
+IPV4_USED="$TRACK_DIR/ipv4_used.txt"
+
+all_ipv4=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
+
+if [ ! -s "$IPV4_USED" ]; then
+    touch "$IPV4_USED"
+fi
+
+used_ips=($(cat "$IPV4_USED"))
+
+if [ ${#used_ips[@]} -ge ${#all_ipv4[@]} ]; then
+    echo -n "" > "$IPV4_USED"
+    used_ips=()
+fi
+
+for ip in "${all_ipv4[@]}"; do
+    if [[ ! " ${used_ips[*]} " =~ " ${ip} " ]]; then
+        echo "$ip" >> "$IPV4_USED"
+        echo "$ip"
+        exit 0
+    fi
+done
+
+echo "${all_ipv4[0]}"
+EOF
+    chmod +x /etc/xrayL/track/select_next_ipv4.sh
+
+    # 配置Xray
+    local config_content=""
+    for ip in "${IPV4_ADDRESSES[@]}"; do
+        local next_ip=$(/etc/xrayL/track/select_next_ipv4.sh)
+        config_content+=$(cat <<EOF
+[[inbounds]]
+listen = "$ip"
+port = $socks_port
+protocol = "socks"
+tag = "in_$ip"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+EOF
+)
+    done
+
+    # 添加出站和路由规则
+    config_content+="[[outbounds]]\n"
+    config_content+="protocol = \"freedom\"\n"
+    config_content+="tag = \"random_ipv4_out\"\n"
+    config_content+="[outbounds.settings]\n"
+    config_content+="domainStrategy = \"UseIPv4\"\n"
+    config_content+="sendThrough = \"$next_ip\"\n"
+
+    echo -e "$config_content" > /etc/xrayL/config.toml
+}
+
+# IPv4进随机IPv6出策略
+config_random_ipv6_strategy() {
+    # 创建IPv6选择脚本
+    cat <<'EOF' > /etc/xrayL/track/select_next_ipv6.sh
+#!/bin/bash
+TRACK_DIR="/etc/xrayL/track"
+IPV6_USED="$TRACK_DIR/ipv6_used.txt"
+
+all_ipv6=($(ip -6 addr show | grep "inet6" | grep "scope global" | grep -v "temporary" | awk '{print $2}' | cut -d'/' -f1))
+
+if [ ! -s "$IPV6_USED" ]; then
+    touch "$IPV6_USED"
+fi
+
+used_ips=($(cat "$IPV6_USED"))
+
+if [ ${#used_ips[@]} -ge ${#all_ipv6[@]} ]; then
+    echo -n "" > "$IPV6_USED"
+    used_ips=()
+fi
+
+for ip in "${all_ipv6[@]}"; do
+    if [[ ! " ${used_ips[*]} " =~ " ${ip} " ]]; then
+        echo "$ip" >> "$IPV6_USED"
+        echo "$ip"
+        exit 0
+    fi
+done
+
+echo "${all_ipv6[0]}"
+EOF
+    chmod +x /etc/xrayL/track/select_next_ipv6.sh
+
+    # 配置Xray
+    local config_content=""
+    for ip in "${IPV4_ADDRESSES[@]}"; do
+        local next_ipv6=$(/etc/xrayL/track/select_next_ipv6.sh)
+        config_content+=$(cat <<EOF
+[[inbounds]]
+listen = "$ip"
+port = $socks_port
+protocol = "socks"
+tag = "in_$ip"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+EOF
+)
+    done
+
+    # 添加出站和路由规则
+    config_content+="[[outbounds]]\n"
+    config_content+="protocol = \"freedom\"\n"
+    config_content+="tag = \"random_ipv6_out\"\n"
+    config_content+="[outbounds.settings]\n"
+    config_content+="domainStrategy = \"UseIPv6\"\n"
+    config_content+="sendThrough = \"$next_ipv6\"\n"
+
+    echo -e "$config_content" > /etc/xrayL/config.toml
+}
+
+# IPv4进固定IPv6出策略
+config_fixed_ipv6_strategy() {
+    local config_content=""
+    local ipv6_index=0
+    
+    for ip in "${IPV4_ADDRESSES[@]}"; do
+        if [ $ipv6_index -lt ${#IPV6_ADDRESSES[@]} ]; then
+            local fixed_ipv6="${IPV6_ADDRESSES[$ipv6_index]}"
+            config_content+=$(cat <<EOF
+[[inbounds]]
+listen = "$ip"
+port = $socks_port
+protocol = "socks"
+tag = "in_$ip"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+[[outbounds]]
+protocol = "freedom"
+tag = "out_$ip"
+[outbounds.settings]
+domainStrategy = "UseIPv6"
+sendThrough = "$fixed_ipv6"
+
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_$ip"]
+outboundTag = "out_$ip"
+
+EOF
+)
+            ((ipv6_index++))
+        fi
+    done
+    
+    echo -e "$config_content" > /etc/xrayL/config.toml
+}
+
+
+
 # 主菜单
+# 在show_menu函数中更新选项
 show_menu() {
     echo -e "\n${YELLOW}=== 代理服务器管理工具 ===${NC}"
     echo "1. 环境配置（安装必要组件）"
     echo "2. 启用BBR加速"
     echo "3. IPv6地址管理"
     echo "4. 设置带宽控制"
-    echo "5. 代理服务设置"
-    echo "6. 测试代理连通性"
-    echo "7. 显示代理列表"
-    echo "8. 清除所有代理规则"
-    echo "9. 退出"
+    echo "5. SOCKS5代理设置"
+    echo "6. 设置IP进出策略"
+    echo "7. 测试代理连通性"
+    echo "8. 显示代理列表"
+    echo "9. 清除所有代理规则"
+    echo "10. 退出"
 
-    read -p "请输入选项 [1-9]: " option
+    read -p "请输入选项 [1-10]: " option
     case $option in
         1) setup_environment ;;
         2) enable_bbr ;;
         3) ipv6_manager_menu ;;
         4) setup_bandwidth_control ;;
         5) set_proxy_config ;;
-        6) test_proxy_connectivity ;;
-        7) 
+        6) set_ip_strategy ;;
+        7) test_proxy_connectivity ;;
+        8) 
             if [ -f /root/proxy_list.txt ]; then
                 cat /root/proxy_list.txt
             else
                 echo -e "${RED}/root/proxy_list.txt 文件不存在。${NC}"
             fi
             ;;
-        8) clear_proxy_rules ;;
-        9) echo "退出脚本。"; exit ;;
-        *) echo -e "${RED}无效选项，请输入1-9之间的数字${NC}" ;;
+        9) clear_proxy_rules ;;
+        10) echo "退出脚本。"; exit ;;
+        *) echo -e "${RED}无效选项，请输入1-10之间的数字${NC}" ;;
     esac
 }
 
