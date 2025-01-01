@@ -281,6 +281,7 @@ show_current_ipv6() {
 }
 
 # IP策略配置模块
+# IP策略配置模块
 set_ip_strategy() {
     echo "配置IP进出策略..."
     
@@ -337,6 +338,33 @@ set_ip_strategy() {
             done
             
             declare -A port_ipv6_map
+            
+            # 自动分配IPv6地址给端口
+            echo -e "\n${YELLOW}端口与IPv6地址的对应关系：${NC}"
+            for ((i=0; i<port_count; i++)); do
+                current_port=$((socks_port + i))
+                ipv6_index=$((i % ipv6_count))
+                port_ipv6_map[$current_port]=${ipv6_addrs[$ipv6_index]}
+                echo -e "${GREEN}端口 $current_port -> IPv6: ${ipv6_addrs[$ipv6_index]}${NC}"
+            done
+            
+            read -p "确认使用以上配置？[y/N] " confirm
+            if [[ ! $confirm =~ ^[Yy]$ ]]; then
+                echo -e "${YELLOW}已取消配置${NC}"
+                return 1
+            fi
+            
+            configure_ip_strategy $strategy port_ipv6_map
+            ;;
+        1|2|3)
+            configure_ip_strategy $strategy
+            ;;
+        *)
+            echo -e "${RED}无效的策略选择${NC}"
+            return 1
+            ;;
+    esac
+}
             
             # 自动分配IPv6地址给端口
             echo -e "\n${YELLOW}端口与IPv6地址的对应关系：${NC}"
