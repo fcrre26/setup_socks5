@@ -283,10 +283,13 @@ show_current_ipv6() {
     echo "$ipv6_list"
 }
 
+# ... [前面的代码]
+
 # IP策略配置模块
 configure_ip_strategy() {
     local strategy=$1
-    declare -n port_map=$2
+    declare -n port_map_ref=$2  # 使用引用关联数组
+
     mkdir -p /etc/xray
     echo -n "" > /etc/xray/serve.toml
 
@@ -299,7 +302,7 @@ listen = "$ipv4"
 port = $socks_port
 protocol = "socks"
 tag = "in_$ipv4"
-[inbounds.settings]
+[ inbounds.settings ]
 auth = "password"
 udp = true
 [[inbounds.settings.accounts]]
@@ -309,7 +312,7 @@ pass = "$socks_pass"
 [[outbounds]]
 protocol = "freedom"
 tag = "out_$ipv4"
-[outbounds.settings]
+[ outbounds.settings ]
 domainStrategy = "UseIPv4"
 sendThrough = "$ipv4"
 
@@ -330,7 +333,7 @@ listen = "$ipv4"
 port = $socks_port
 protocol = "socks"
 tag = "in_$ipv4"
-[inbounds.settings]
+[ inbounds.settings ]
 auth = "password"
 udp = true
 [[inbounds.settings.accounts]]
@@ -376,7 +379,7 @@ EOF
 [[outbounds]]
 protocol = "freedom"
 tag = "out"
-[outbounds.settings]
+[ outbounds.settings ]
 domainStrategy = "UseIPv4"
 sendThrough = "$next_ip"
 
@@ -386,7 +389,7 @@ network = ["tcp", "udp"]
 outboundTag = "out"
 EOF
             ;;
-
+        
         3)  # IPv4进随机IPv6出
             # 配置入站
             for ipv4 in "${ipv4_addrs[@]}"; do
@@ -396,7 +399,7 @@ listen = "$ipv4"
 port = $socks_port
 protocol = "socks"
 tag = "in_$ipv4"
-[inbounds.settings]
+[ inbounds.settings ]
 auth = "password"
 udp = true
 [[inbounds.settings.accounts]]
@@ -442,7 +445,7 @@ EOF
 [[outbounds]]
 protocol = "freedom"
 tag = "out"
-[outbounds.settings]
+[ outbounds.settings ]
 domainStrategy = "UseIPv6"
 sendThrough = "$next_ipv6"
 
@@ -452,16 +455,16 @@ network = ["tcp", "udp"]
 outboundTag = "out"
 EOF
             ;;
-
+        
         4)  # IPv4进，不同端口对应固定IPv6出
             # 为每个端口配置对应的IPv6出站
-            for port in "${!port_map[@]}"; do
-                ipv6=${port_map[$port]}
+            for port in "${!port_map_ref[@]}"; do
+                ipv6=${port_map_ref[$port]}
                 cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
 tag = "out_${port}"
-[outbounds.settings]
+[ outbounds.settings ]
 domainStrategy = "UseIPv6"
 sendThrough = "$ipv6"
 
@@ -473,7 +476,7 @@ EOF
             done
 
             # 为每个端口配置入站
-            for port in "${!port_map[@]}"; do
+            for port in "${!port_map_ref[@]}"; do
                 for ipv4 in "${ipv4_addrs[@]}"; do
                     cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
@@ -481,7 +484,7 @@ listen = "$ipv4"
 port = $port
 protocol = "socks"
 tag = "in_${port}"
-[inbounds.settings]
+[ inbounds.settings ]
 auth = "password"
 udp = true
 [[inbounds.settings.accounts]]
@@ -587,7 +590,7 @@ set_ip_strategy() {
 
             configure_ip_strategy $strategy port_ipv6_map
             ;;
-        1|2|3)
+        2|3)
             configure_ip_strategy $strategy
             ;;
         *)
@@ -596,6 +599,8 @@ set_ip_strategy() {
             ;;
     esac
 }
+
+# ... [后续代码]
 
 # 代理管理模块
 generate_proxy_list() {
