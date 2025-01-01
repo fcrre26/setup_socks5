@@ -713,7 +713,7 @@ set_ip_strategy() {
     
     # 获取IPv4和IPv6地址列表
     ipv4_addrs=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
-    ipv6_addrs=($(ip -6 addr show | grep -oP '(?<=inet6\s)[\da-f:]+' | grep -v '^fe80' | grep -v '^::1'))
+    ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
     
     echo "当前IPv4地址: ${ipv4_addrs[@]}"
     echo "当前IPv6地址: ${ipv6_addrs[@]}"
