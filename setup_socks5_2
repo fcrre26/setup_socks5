@@ -711,7 +711,7 @@ set_ip_strategy() {
     touch /etc/xray/track/ipv4_used.txt
     touch /etc/xray/track/ipv6_used.txt
     
-    # 获取IPv4和IPv6地址列表
+    # 获取IPv4和IPv6地址列表 
     ipv4_addrs=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
     ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
     
