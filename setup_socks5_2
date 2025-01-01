@@ -479,7 +479,7 @@ set_ip_strategy() {
     case $strategy in
         4)
             # 获取IPv6地址列表
-            ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
+            ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep "scope global" | grep -v "temporary" | awk '{print $2}' | cut -d'/' -f1))
             ipv6_count=${#ipv6_addrs[@]}
             echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
 
