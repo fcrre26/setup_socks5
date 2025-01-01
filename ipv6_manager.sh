@@ -612,11 +612,11 @@ EOF
             done
             ;;
         
-2)  # IPv4进随机IPv4出
-    echo -e "${YELLOW}配置IPv4轮询策略...${NC}"
-    # 配置入站
-    for ipv4 in "${ipv4_addrs[@]}"; do
-        cat <<EOF >> /etc/xray/serve.toml
+        2)  # IPv4进随机IPv4出
+            echo -e "${YELLOW}配置IPv4轮询策略...${NC}"
+            # 配置入站
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 listen = "$ipv4"
 port = $socks_port
@@ -629,11 +629,11 @@ udp = true
 user = "$socks_user"
 pass = "$socks_pass"
 EOF
-    done
+            done
 
-    # 为每个IPv4创建出站
-    for ipv4 in "${ipv4_addrs[@]}"; do
-        cat <<EOF >> /etc/xray/serve.toml
+            # 为每个IPv4创建出站
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
 tag = "out_$ipv4"
@@ -641,34 +641,34 @@ tag = "out_$ipv4"
 domainStrategy = "UseIPv4"
 sendThrough = "$ipv4"
 EOF
-    done
+            done
 
-    # 创建负载均衡器
-    cat <<EOF >> /etc/xray/serve.toml
+            # 创建负载均衡器
+            cat <<EOF >> /etc/xray/serve.toml
 [[routing.balancers]]
 tag = "ipv4_balancer"
 strategy = "random"
 EOF
-    echo -n "selectors = [" >> /etc/xray/serve.toml
-    first=true
-    for ipv4 in "${ipv4_addrs[@]}"; do
-        if [ "$first" = true ]; then
-            echo -n "\"out_$ipv4\"" >> /etc/xray/serve.toml
-            first=false
-        else
-            echo -n ", \"out_$ipv4\"" >> /etc/xray/serve.toml
-        fi
-    done
-    echo "]" >> /etc/xray/serve.toml
+            echo -n "selectors = [" >> /etc/xray/serve.toml
+            first=true
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                if [ "$first" = true ]; then
+                    echo -n "\"out_$ipv4\"" >> /etc/xray/serve.toml
+                    first=false
+                else
+                    echo -n ", \"out_$ipv4\"" >> /etc/xray/serve.toml
+                fi
+            done
+            echo "]" >> /etc/xray/serve.toml
 
-    # 配置路由规则
-    cat <<EOF >> /etc/xray/serve.toml
+            # 配置路由规则
+            cat <<EOF >> /etc/xray/serve.toml
 [[routing.rules]]
 type = "field"
 network = ["tcp", "udp"]
 balancerTag = "ipv4_balancer"
 EOF
-    ;;
+            ;;
 
         3)  # IPv4进随机IPv6出
             echo -e "${YELLOW}配置IPv6轮询策略...${NC}"
@@ -768,6 +768,28 @@ EOF
             done
             ;;
     esac
+
+    # 检查配置文件
+    echo -e "${YELLOW}验证Xray配置...${NC}"
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
+        echo -e "${RED}Xray 配置验证失败${NC}"
+        return 1
+    fi
+
+    # 重启 Xray 服务
+    echo -e "${YELLOW}重启Xray服务...${NC}"
+    systemctl restart xray
+    sleep 2
+
+    if ! systemctl is-active --quiet xray; then
+        echo -e "${RED}Xray 服务启动失败${NC}"
+        systemctl status xray
+        return 1
+    fi
+
+    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
+    return 0
+}
 
     # 检查配置文件
     echo -e "${YELLOW}验证Xray配置...${NC}"
