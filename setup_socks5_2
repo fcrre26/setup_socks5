@@ -286,7 +286,7 @@ show_current_ipv6() {
 # IP策略配置模块
 configure_ip_strategy() {
     local strategy=$1
-    declare -n port_map=$2
+    declare -A port_map  # 在这里声明关联数组
     mkdir -p /etc/xray
     echo -n "" > /etc/xray/serve.toml
 
@@ -569,58 +569,74 @@ set_ip_strategy() {
     read -p "请输入选项 [1-4]: " strategy
 
     case $strategy in
-        4)
-            # 获取当前可用的IPv6地址数量
-            ipv6_count=${#ipv6_addrs[@]}
-            echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
-
-            while true; do
-                read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
-                if ! [[ "$port_count" =~ ^[0-9]+$ ]]; then
-                    echo -e "${RED}请输入有效的数字${NC}"
-                    continue
-                fi
-
-                if [ "$port_count" -gt "$ipv6_count" ]; then
-                    echo -e "${RED}错误: 端口数量($port_count)不能超过可用的IPv6地址数量($ipv6_count)${NC}"
-                    continue
-                fi
-
-                if [ "$port_count" -lt 1 ]; then
-                    echo -e "${RED}错误: 端口数量必须大于0${NC}"
-                    continue
-                fi
-
-                break
-            done
-
-            declare -A port_ipv6_map
-
-            # 自动分配IPv6地址给端口
-            echo -e "\n${YELLOW}端口与IPv6地址的对应关系：${NC}"
-            for ((i=0; i<port_count; i++)); do
+        4)  # IPv4进，不同端口对应固定IPv6出
+            # 为每个端口配置对应的IPv6出站
+            for ((i=0; i<$port_count; i++)); do
                 current_port=$((socks_port + i))
-                ipv6_index=$((i % ipv6_count))
-                port_ipv6_map[$current_port]=${ipv6_addrs[$ipv6_index]}
-                echo -e "${GREEN}端口 $current_port -> IPv6: ${ipv6_addrs[$ipv6_index]}${NC}"
+                if [ ${#ipv6_addrs[@]} -gt $i ]; then
+                    port_map[$current_port]=${ipv6_addrs[$i]}
+                else
+                    echo -e "${RED}错误: IPv6地址数量不足以为所有端口提供唯一的地址${NC}"
+                    return 1
+                fi
             done
 
-            read -p "确认使用以上配置？[y/N] " confirm
-            if [[ ! $confirm =~ ^[Yy]$ ]]; then
-                echo -e "${YELLOW}已取消配置${NC}"
-                return 1
-            fi
+            for port in "${!port_map[@]}"; do
+                ipv6=${port_map[$port]}
+                cat <<EOF >> /etc/xray/serve.toml
+[[outbounds]]
+protocol = "freedom"
+tag = "out_${port}"
+[outbounds.settings]
+domainStrategy = "UseIPv6"
+sendThrough = "$ipv6"
 
-            configure_ip_strategy $strategy port_ipv6_map
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_${port}"]
+outboundTag = "out_${port}"
+EOF
+            done
+
+            for port in "${!port_map[@]}"; do
+                for ipv4 in "${ipv4_addrs[@]}"; do
+                    cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+listen = "$ipv4"
+port = $port
+protocol = "socks"
+tag = "in_${port}"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+EOF
+                done
+            done
             ;;
-        1|2|3)
-            configure_ip_strategy $strategy
-            ;;
-        *)
-            echo -e "${RED}无效的策略选择${NC}"
-            return 1
-            ;;
+        # ... 其他策略 ...
     esac
+
+    # 检查配置文件
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
+        echo -e "${RED}Xray 配置验证失败${NC}"
+        return 1
+    fi
+
+    # 重启 Xray 服务
+    systemctl restart xray
+    sleep 2
+
+    if ! systemctl is-active --quiet xray; then
+        echo -e "${RED}Xray 服务启动失败${NC}"
+        systemctl status xray
+        return 1
+    fi
+
+    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
+    return 0
 }
 
 # 代理管理模块
