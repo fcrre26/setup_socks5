@@ -318,6 +318,7 @@ EOF
             done
             ;;
             
+            
         2)  # IPv4进随机IPv4出
             # 配置入站
             for ipv4 in "${ipv4_addrs[@]}"; do
