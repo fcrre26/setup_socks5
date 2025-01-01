@@ -454,11 +454,10 @@ EOF
             ;;
 
 # IPv4进，不同端口对应固定IPv6出（自动分配）
-port_map=()
 for ((i=0; i<$port_count; i++)); do
     current_port=$((socks_port + i))
     if [ ${#ipv6_addrs[@]} -gt $i ]; then
-        port_map[$i]="$current_port=${ipv6_addrs[$i]}"
+        export port_map_${current_port}=${ipv6_addrs[$i]}
     else
         echo -e "${RED}错误: IPv6地址数量不足以为所有端口提供唯一的地址${NC}"
         return 1
@@ -466,10 +465,8 @@ for ((i=0; i<$port_count; i++)); do
 done
 
 # 为每个端口配置对应的IPv6出站
-for i in "${!port_map[@]}"; do
-    port_and_ipv6=${port_map[$i]}
-    port=$(echo $port_and_ipv6 | cut -d'=' -f1)
-    ipv6=$(echo $port_and_ipv6 | cut -d'=' -f2)
+for port in ${!port_map_@}; do
+    ipv6=${port_map_$port}
     cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
@@ -486,9 +483,7 @@ EOF
 done
 
 # 为每个端口配置入站
-for i in "${!port_map[@]}"; do
-    port_and_ipv6=${port_map[$i]}
-    port=$(echo $port_and_ipv6 | cut -d'=' -f1)
+for port in ${!port_map_@}; do
     for ipv4 in "${ipv4_addrs[@]}"; do
         cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
