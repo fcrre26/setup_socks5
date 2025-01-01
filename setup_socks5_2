@@ -135,7 +135,8 @@ install_xray() {
 # IPv6相关函数
 generate_random_hex() {
     local length=$1
-    head -c $((length/2)) /dev/urandom | hexdump -ve '1/1 "%.2x"'
+    # 生成4个字节（8个十六进制字符）
+    head -c $((4)) /dev/urandom | hexdump -ve '1/1 "%.2x"'
 }
 
 get_main_interface() {
@@ -144,16 +145,36 @@ get_main_interface() {
         echo -e "${RED}错误: 无法检测到主网卡${NC}"
         exit 1
     fi
+    
+    # 检查接口状态
+    if ! ip link show dev $MAIN_INTERFACE | grep -q "UP"; then
+        echo -e "${YELLOW}警告: 接口 $MAIN_INTERFACE 未启用${NC}"
+        echo "正在启用接口..."
+        ip link set dev $MAIN_INTERFACE up
+        sleep 1
+    fi
+    
+    echo "使用网络接口: $MAIN_INTERFACE"
     echo $MAIN_INTERFACE
 }
 
 get_ipv6_prefix() {
     local interface=$1
+    echo "检查接口 $interface 的IPv6配置..."
+    
+    # 显示详细的IPv6信息
+    echo "当前IPv6配置："
+    ip -6 addr show dev $interface
+    
+    # 获取全局IPv6前缀
     IPV6_PREFIX=$(ip -6 addr show dev $interface | grep -v fe80 | grep -v fd00 | grep inet6 | head -n1 | awk '{print $2}' | cut -d'/' -f1 | sed 's/:[^:]*$/::/')
+    
     if [ -z "$IPV6_PREFIX" ]; then
-        echo -e "${RED}错误: 未检测到IPv6地址${NC}"
+        echo -e "${RED}错误: 未检测到有效的IPv6前缀${NC}"
         return 1
     fi
+    
+    echo "获取到IPv6前缀: $IPV6_PREFIX"
     echo $IPV6_PREFIX
 }
 
@@ -161,6 +182,7 @@ get_ipv6_prefix() {
 show_current_ipv6() {
     local interface=$1
     echo "当前IPv6地址列表："
+    
     # 使用 ip -6 addr show 命令显示所有IPv6地址
     ip -6 addr show dev $interface | grep -v fe80 | grep inet6 | while read -r line; do
         # 格式化输出，使其更易读
@@ -217,6 +239,22 @@ add_ipv6_addresses() {
     local prefix=$2
     local num=$3
     
+    # 检查是否有root权限
+    if [ "$EUID" -ne 0 ]; then 
+        echo -e "${RED}需要root权限来添加IPv6地址${NC}"
+        return 1
+    fi
+    
+    # 验证接口状态
+    if ! ip link show dev $interface | grep -q "UP"; then
+        echo "启用网络接口 $interface..."
+        ip link set dev $interface up
+        sleep 1
+    fi
+    
+    # 简化IPv6地址格式
+    prefix=$(echo $prefix | sed 's/::.*/::/') # 确保只保留前缀部分
+    
     # 创建配置文件目录
     mkdir -p /etc/network/interfaces.d/
     CONFIG_FILE="/etc/network/interfaces.d/60-ipv6-addresses"
@@ -226,38 +264,39 @@ add_ipv6_addresses() {
         echo "# 自动生成的IPv6配置" > $CONFIG_FILE
     fi
     
-    # 用于存储已生成的地址
-    declare -A GENERATED_ADDRESSES
-    
     # 生成并添加IPv6地址
     count=0
     while [ $count -lt $num ]; do
-        RANDOM_SUFFIX=$(generate_random_hex 16)
+        # 生成更短的随机后缀
+        RANDOM_SUFFIX=$(generate_random_hex 8)
         NEW_IPV6="${prefix}${RANDOM_SUFFIX}"
         
-        if [ -z "${GENERATED_ADDRESSES[$NEW_IPV6]}" ]; then
-            GENERATED_ADDRESSES[$NEW_IPV6]=1
+        echo "尝试添加IPv6地址: $NEW_IPV6"
+        
+        # 使用 ip 命令添加地址
+        if ip -6 addr add $NEW_IPV6/64 dev $interface 2>/dev/null; then
+            echo -e "${GREEN}成功添加IPv6地址: $NEW_IPV6${NC}"
+            ((count++))
             
             # 添加到配置文件
             echo "" >> $CONFIG_FILE
             echo "iface $interface inet6 static" >> $CONFIG_FILE
             echo "    address $NEW_IPV6" >> $CONFIG_FILE
             echo "    netmask 64" >> $CONFIG_FILE
-            
-            # 立即添加IPv6地址
-            if ip -6 addr add $NEW_IPV6/64 dev $interface 2>/dev/null; then
-                echo -e "${GREEN}已添加IPv6地址: $NEW_IPV6${NC}"
-                ((count++))
-            else
-                echo -e "${RED}添加地址失败: $NEW_IPV6${NC}"
-            fi
+        else
+            echo -e "${RED}添加地址失败: $NEW_IPV6${NC}"
+            echo "错误详情："
+            ip -6 addr add $NEW_IPV6/64 dev $interface 2>&1
         fi
+        
+        sleep 0.5 # 添加短暂延迟，避免过快添加
     done
     
-    # 重启网络接口以应用更改
-    echo "正在重启网络接口以应用更改..."
-    ip link set dev $interface down
-    ip link set dev $interface up
+    # 显示当前IPv6配置
+    echo -e "\n当前IPv6地址配置："
+    ip -6 addr show dev $interface
+    
+    return 0
 }
 
 # IPv6管理菜单
@@ -309,7 +348,6 @@ ipv6_manager_menu() {
         read
     done
 }
-
 # IP策略配置模块
 set_ip_strategy() {
     echo "配置IP进出策略..."
