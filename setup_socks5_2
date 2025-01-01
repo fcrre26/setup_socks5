@@ -231,12 +231,6 @@ show_current_ipv6() {
     fi
     echo "$ipv6_list"
 }
-
-# 修改主菜单中的 case 语句，将选项3替换为：
-case $option in
-    # ... 其他选项 ...
-    3)
-        while true; do
             echo -e "\n${YELLOW}IPv6地址管理工具${NC}"
             echo "1. 添加随机IPv6地址"
             echo "2. 删除所有IPv6地址"
