@@ -129,20 +129,116 @@ get_ipv6_prefix() {
     echo $IPV6_PREFIX
 }
 
-check_ipv6() {
-    if [ "$(sysctl -n net.ipv6.conf.all.disable_ipv6)" -eq 1 ]; then
-        echo -e "${RED}IPv6 当前被禁用${NC}"
-        echo -e "${YELLOW}是否要启用IPv6？(y/n)${NC}"
-        read -r enable_ipv6
-        if [ "$enable_ipv6" = "y" ]; then
-            echo "net.ipv6.conf.all.disable_ipv6 = 0" >> /etc/sysctl.conf
-            echo "net.ipv6.conf.default.disable_ipv6 = 0" >> /etc/sysctl.conf
-            sysctl -p
-            echo -e "${GREEN}IPv6已启用，请重新运行脚本${NC}"
-            exit 0
-        fi
-    fi
+verify_ipv6_addresses() {
+    echo "验证IPv6地址..."
+    local added_count=0
+    local interface=$1
+    
+    # 等待短暂时间让地址生效
+    sleep 2
+    
+    # 获取当前所有IPv6地址
+    local current_addrs=($(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
+    
+    echo "当前可用的IPv6地址："
+    for addr in "${current_addrs[@]}"; do
+        echo "$addr"
+        ((added_count++))
+    done
+    
+    echo "总计: $added_count 个IPv6地址"
+    return $added_count
 }
+
+# IPv6管理函数
+add_ipv6_addresses() {
+    local interface=$1
+    local prefix=$2
+    local num=$3
+    
+    # 创建配置文件目录
+    mkdir -p /etc/network/interfaces.d/
+    
+    # 创建或追加配置文件
+    CONFIG_FILE="/etc/network/interfaces.d/60-ipv6-addresses"
+    
+    # 如果是新建，添加头部注释
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "# 自动生成的IPv6配置" > $CONFIG_FILE
+    fi
+    
+    # 用于存储已生成的地址
+    declare -A GENERATED_ADDRESSES
+    
+    # 生成并添加IPv6地址
+    count=0
+    while [ $count -lt $num ]; do
+        RANDOM_SUFFIX=$(generate_random_hex 16)
+        NEW_IPV6="${prefix}${RANDOM_SUFFIX}"
+        
+        if [ -z "${GENERATED_ADDRESSES[$NEW_IPV6]}" ]; then
+            GENERATED_ADDRESSES[$NEW_IPV6]=1
+            
+            # 直接使用ip命令添加地址
+            ip -6 addr add $NEW_IPV6/64 dev $interface
+            
+            # 同时写入配置文件以保持永久性
+            echo "" >> $CONFIG_FILE
+            echo "up ip -6 addr add $NEW_IPV6/64 dev $interface" >> $CONFIG_FILE
+            
+            echo -e "${GREEN}已添加IPv6地址: $NEW_IPV6${NC}"
+            ((count++))
+            
+            # 等待短暂时间确保地址生效
+            sleep 1
+        fi
+    done
+    
+    # 重启网络接口以应用更改
+    ip link set $interface down && ip link set $interface up
+    
+    # 验证添加的地址
+    verify_ipv6_addresses $interface
+}
+
+delete_all_ipv6() {
+    local interface=$1
+    
+    # 删除配置文件
+    CONFIG_FILE="/etc/network/interfaces.d/60-ipv6-addresses"
+    if [ -f "$CONFIG_FILE" ]; then
+        rm -f "$CONFIG_FILE"
+        echo -e "${GREEN}已删除配置文件${NC}"
+    fi
+    
+    # 删除所有非本地IPv6地址
+    for addr in $(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}'); do
+        ip -6 addr del $addr dev $interface
+        echo -e "${YELLOW}已删除IPv6地址: $addr${NC}"
+    done
+    
+    echo -e "${GREEN}所有配置的IPv6地址已删除${NC}"
+}
+
+show_current_ipv6() {
+    local interface=$1
+    echo -e "${YELLOW}当前IPv6地址列表：${NC}"
+    local ipv6_list=$(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | grep -v "::1")
+    if [ -z "$ipv6_list" ]; then
+        echo -e "${RED}未检测到任何IPv6地址${NC}"
+        return 1
+    fi
+    
+    # 更清晰地显示每个地址
+    while read -r line; do
+        if [[ $line =~ inet6[[:space:]]([a-f0-9:]+)/([0-9]+) ]]; then
+            echo "地址: ${BASH_REMATCH[1]}"
+            echo "前缀长度: ${BASH_REMATCH[2]}"
+            echo "---"
+        fi
+    done <<< "$ipv6_list"
+}
+
 
 # 代理设置模块
 set_socks5_credentials() {
@@ -907,6 +1003,7 @@ EOF
     echo "IP策略设置完成并成功启动服务"
     return 0
 }
+
 # IPv6管理菜单
 ipv6_manager_menu() {
     while true; do
