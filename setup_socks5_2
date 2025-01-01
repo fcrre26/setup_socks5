@@ -513,14 +513,14 @@ EOF
     return 0
 }
 
+ IP策略配置模块
 set_ip_strategy() {
     echo "配置IP进出策略..."
 
-    # 如果没有之前设置的信息，先获取
+    # 检查是否已设置凭证
     if [ -z "$socks_port" ] || [ -z "$socks_user" ] || [ -z "$socks_pass" ]; then
-        read -p "请输入SOCKS5起始端口: " socks_port
-        read -p "请输入用户名: " socks_user
-        read -p "请输入密码: " socks_pass
+        echo -e "${RED}错误: 请先设置SOCKS5凭证信息${NC}"
+        return 1
     fi
 
     # 创建追踪目录和文件
