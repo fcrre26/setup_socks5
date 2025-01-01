@@ -140,11 +140,24 @@ generate_random_hex() {
 }
 
 get_main_interface() {
+    local MAIN_INTERFACE
     MAIN_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
     if [ -z "$MAIN_INTERFACE" ]; then
-        echo -e "${RED}错误: 无法检测到主网卡${NC}"
-        exit 1
+        echo -e "${RED}错误: 无法检测到主网卡${NC}" >&2
+        return 1
     fi
+    
+    # 检查接口状态
+    if ! ip link show dev "$MAIN_INTERFACE" | grep -q "UP"; then
+        echo -e "${YELLOW}警告: 接口 $MAIN_INTERFACE 未启用${NC}" >&2
+        echo "正在启用接口..." >&2
+        ip link set dev "$MAIN_INTERFACE" up
+        sleep 1
+    fi
+    
+    echo -e "${GREEN}使用网络接口: $MAIN_INTERFACE${NC}" >&2
+    echo "$MAIN_INTERFACE"
+}
     
     # 检查接口状态
     if ! ip link show dev $MAIN_INTERFACE | grep -q "UP"; then
