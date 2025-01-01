@@ -670,6 +670,7 @@ MAX_CONCURRENT_CONNECTIONS=500
 PROXY_TIMEOUT=300
 
 # 代理配置核心函数
+# 代理配置核心函数
 configure_ip_strategy() {
     local strategy=$1
     declare -n port_map=$2
@@ -688,7 +689,6 @@ log {
     error = "$XRAY_ERROR_LOG"
     loglevel = "warning"
 }
-
 EOF
 
     case $strategy in
@@ -718,9 +718,6 @@ EOF
     # 验证配置
     if ! /usr/local/bin/xray -test -config "$temp_config"; then
         log_message "ERROR" "Xray 配置验证失败"
-        rm -f "$temp_config"
-        return 1
-    }
 
     # 应用新配置
     mv "$temp_config" "$config_file"
