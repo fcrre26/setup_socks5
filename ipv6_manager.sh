@@ -289,16 +289,7 @@ show_current_ipv6() {
 }
 
 # IP策略配置模块
-configure_ip_strategy() {
-    local strategy=$1
-    declare -n port_map=$2
-    mkdir -p /etc/xray
-    echo -n "" > /etc/xray/serve.toml
 
-    case $strategy in
-        1)  # 同IP进同IP出
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 listen = "$ipv4"
 port = $socks_port
