@@ -310,33 +310,59 @@ set_ip_strategy() {
     echo "4. IPv4进，不同端口对应固定IPv6出（自动分配）"
     read -p "请输入选项 [1-4]: " strategy
 
-    case $strategy in
-4)
-    # 获取当前可用的IPv6地址数量
-    ipv6_count=${#ipv6_addrs[@]}
-    echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
-    
-    while true; do
-        read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
-        if ! [[ "$port_count" =~ ^[0-9]+$ ]]; then
-            echo -e "${RED}请输入有效的数字${NC}"
-            continue
+case $strategy in
+    4)
+        # 获取当前可用的IPv6地址数量
+        ipv6_count=${#ipv6_addrs[@]}
+        echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
+        
+        while true; do
+            read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
+            if ! [[ "$port_count" =~ ^[0-9]+$ ]]; then
+                echo -e "${RED}请输入有效的数字${NC}"
+                continue
+            fi
+            
+            if [ "$port_count" -gt "$ipv6_count" ]; then
+                echo -e "${RED}错误: 端口数量($port_count)不能超过可用的IPv6地址数量($ipv6_count)${NC}"
+                continue
+            fi
+            
+            if [ "$port_count" -lt 1 ]; then
+                echo -e "${RED}错误: 端口数量必须大于0${NC}"
+                continue
+            fi
+            
+            break
+        done
+        
+        declare -A port_ipv6_map
+        
+        # 自动分配IPv6地址给端口
+        echo -e "\n${YELLOW}端口与IPv6地址的对应关系：${NC}"
+        for ((i=0; i<port_count; i++)); do
+            current_port=$((socks_port + i))
+            ipv6_index=$((i % ipv6_count))
+            port_ipv6_map[$current_port]=${ipv6_addrs[$ipv6_index]}
+            echo -e "${GREEN}端口 $current_port -> IPv6: ${ipv6_addrs[$ipv6_index]}${NC}"
+        done
+        
+        read -p "确认使用以上配置？[y/N] " confirm
+        if [[ ! $confirm =~ ^[Yy]$ ]]; then
+            echo -e "${YELLOW}已取消配置${NC}"
+            return 1
         fi
         
-        if [ "$port_count" -gt "$ipv6_count" ]; then
-            echo -e "${RED}错误: 端口数量($port_count)不能超过可用的IPv6地址数量($ipv6_count)${NC}"
-            continue
-        fi
-        
-        if [ "$port_count" -lt 1 ]; then
-            echo -e "${RED}错误: 端口数量必须大于0${NC}"
-            continue
-        fi
-        
-        break
-    done
-    
-    declare -A port_ipv6_map
+        configure_ip_strategy $strategy port_ipv6_map
+        ;;
+    1|2|3)
+        configure_ip_strategy $strategy
+        ;;
+    *)
+        echo "无效的策略选择"
+        return 1
+        ;;
+esac
     
     # 自动分配IPv6地址给端口
     echo -e "\n${YELLOW}端口与IPv6地址的对应关系：${NC}"
