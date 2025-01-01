@@ -132,7 +132,6 @@ install_xray() {
     return 0
 }
 
-# 从这里开始替换 ↓
 # IPv6相关函数
 get_main_interface() {
     local interface
@@ -140,8 +139,83 @@ get_main_interface() {
     # 尝试从默认路由获取主接口
     interface=$(ip route | grep default | awk '{print $5}' | head -n1)
     
-    ...省略中间内容...
+    # 如果上面的方法失败，尝试获取第一个非lo的活动接口
+    if [ -z "$interface" ]; then
+        interface=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2}' | head -n1)
+    fi
     
+    echo "$interface"
+    return 0
+}
+
+# 获取IPv6前缀
+get_ipv6_prefix() {
+    local interface="$1"
+    local prefix
+    
+    prefix=$(ip -6 addr show dev "$interface" | grep -v fe80 | grep inet6 | head -n1 | awk '{print $2}' | cut -d'/' -f1)
+    if [ -z "$prefix" ]; then
+        echo -e "${RED}错误：未找到有效的IPv6前缀${NC}" >&2
+        return 1
+    fi
+    
+    echo "$prefix"
+    return 0
+}
+
+# 添加IPv6地址
+add_ipv6_addresses() {
+    local interface="$1"
+    local prefix="$2"
+    local num="$3"
+    
+    echo -e "${YELLOW}正在添加IPv6地址...${NC}"
+    
+    # 检查接口是否存在
+    if ! ip link show "$interface" >/dev/null 2>&1; then
+        echo -e "${RED}错误：接口 $interface 不存在${NC}"
+        return 1
+    fi
+    
+    # 从前缀中移除可能存在的 /64
+    prefix=$(echo "$prefix" | sed 's/\/64$//')
+    
+    # 生成并添加地址
+    local count=0
+    while [ $count -lt "$num" ]; do
+        # 生成4组随机十六进制数
+        local suffix1=$(generate_random_hex 4)
+        local suffix2=$(generate_random_hex 4)
+        local suffix3=$(generate_random_hex 4)
+        local suffix4=$(generate_random_hex 4)
+        
+        # 构建新的IPv6地址
+        local new_addr="${prefix}:${suffix1}:${suffix2}:${suffix3}:${suffix4}"
+        
+        if ip -6 addr add "$new_addr/64" dev "$interface" 2>/dev/null; then
+            echo -e "${GREEN}成功添加IPv6地址: $new_addr${NC}"
+            ((count++))
+        else
+            echo -e "${RED}添加地址失败: $new_addr${NC}"
+        fi
+        
+        sleep 0.5
+    done
+}
+
+# 显示当前IPv6地址
+show_current_ipv6() {
+    local interface="$1"
+    echo -e "${YELLOW}当前IPv6地址列表：${NC}"
+    ip -6 addr show dev "$interface" | grep inet6 | grep -v fe80
+}
+
+# 生成随机十六进制数
+generate_random_hex() {
+    local length="$1"
+    tr -dc 'a-f0-9' < /dev/urandom | head -c "$length"
+}
+
 # 删除所有IPv6地址
 delete_all_ipv6() {
     local interface="$1"
@@ -164,7 +238,6 @@ delete_all_ipv6() {
     
     echo -e "${GREEN}已删除所有IPv6地址${NC}"
 }
-# 替换到这里结束 ↑
 
 # IP策略配置模块
 set_ip_strategy() {
