@@ -180,18 +180,19 @@ add_ipv6_addresses() {
     declare -A GENERATED_ADDRESSES
     count=0
     while [ $count -lt $num ]; do
-        # 生成8组4位的十六进制数作为接口ID
-        interface_id=""
-        for i in {1..8}; do
-            interface_id+=$(printf "%04x" $((RANDOM % 65536)))
-            if [ $i -lt 8 ]; then
-                interface_id+=":"
+        # 生成4个16位数字作为接口标识符
+        local suffix=""
+        for i in {1..4}; do
+            local rand_hex=$(printf "%04x" $((RANDOM % 65536)))
+            suffix="${suffix}${rand_hex}"
+            if [ $i -lt 4 ]; then
+                suffix="${suffix}:"
             fi
         done
         
-        # 构建完整的IPv6地址
-        prefix_cleaned=$(echo "$prefix" | sed 's/::$//')
-        NEW_IPV6="${prefix_cleaned}${interface_id}"
+        # 确保前缀格式正确（去除多余的冒号）
+        prefix_cleaned=$(echo "$prefix" | sed 's/::*$//')
+        NEW_IPV6="${prefix_cleaned}:${suffix}"
         
         if [ -z "${GENERATED_ADDRESSES[$NEW_IPV6]}" ]; then
             GENERATED_ADDRESSES[$NEW_IPV6]=1
@@ -213,6 +214,8 @@ add_ipv6_addresses() {
         echo "source /etc/network/interfaces.d/*" >> /etc/network/interfaces
     fi
 }
+
+
 delete_all_ipv6() {
     local interface=$1
     
