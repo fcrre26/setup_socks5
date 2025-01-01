@@ -230,35 +230,6 @@ add_ipv6_addresses() {
     fi
 }
     
-    # 确保配置文件存在
-    if [ ! -f "/etc/network/interfaces" ]; then
-        echo "auto lo" > /etc/network/interfaces
-        echo "iface lo inet loopback" >> /etc/network/interfaces
-        echo "" >> /etc/network/interfaces
-    fi
-    
-    # 添加 source 指令（如果不存在）
-    if ! grep -q "source /etc/network/interfaces.d/\*" /etc/network/interfaces; then
-        echo "source /etc/network/interfaces.d/*" >> /etc/network/interfaces
-    fi
-}
-   
-        if [ -z "${GENERATED_ADDRESSES[$NEW_IPV6]}" ]; then
-            GENERATED_ADDRESSES[$NEW_IPV6]=1
-            
-            echo -e "\n${YELLOW}尝试添加新地址: $NEW_IPV6${NC}"
-            if ip -6 addr add "$NEW_IPV6/64" dev "$interface" 2>/dev/null; then
-                echo -e "${GREEN}成功添加IPv6地址: $NEW_IPV6${NC}"
-                echo "" >> $CONFIG_FILE
-                echo "iface $interface inet6 static" >> $CONFIG_FILE
-                echo "    address $NEW_IPV6/64" >> $CONFIG_FILE
-                ((count++))
-            else
-                echo -e "${RED}添加地址失败: $NEW_IPV6${NC}"
-            fi
-        fi
-    done
-    
     # 显示添加后的地址
     echo -e "\n${YELLOW}添加后的IPv6地址:${NC}"
     ip -6 addr show dev $interface
