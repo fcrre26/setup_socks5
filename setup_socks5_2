@@ -726,11 +726,60 @@ set_socks5_credentials() {
     read -p "请输入SOCKS5起始端口: " socks_port
     read -p "请输入用户名: " socks_user
     read -p "请输入密码: " socks_pass
-    
-    # 将凭证信息保存到全局变量
-    export socks_port socks_user socks_pass
-    
+    set_ip_strategy
     echo "SOCKS5端口、用户名和密码设置完成。"
+    return 0
+}
+
+# 代理管理模块
+generate_proxy_list() {
+    local strategy=$1
+    local port_count=$2
+    echo "生成代理列表文件..."
+    echo -n "" > /root/proxy_list.txt
+
+    case $strategy in
+        1)  # 同IP进同IP出
+            echo -e "# 策略：同IP进同IP出\n" >> /root/proxy_list.txt
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                echo "$ipv4:$socks_port:$socks_user:$socks_pass # 出口: $ipv4" >> /root/proxy_list.txt
+            done
+            ;;
+        
+        2)  # IPv4进随机IPv4出
+            echo -e "# 策略：IPv4进随机IPv4出\n" >> /root/proxy_list.txt
+            echo -e "# 可能的出口IP: ${ipv4_addrs[*]}\n" >> /root/proxy_list.txt
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                echo "$ipv4:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
+            done
+            ;;
+        
+        3)  # IPv4进随机IPv6出
+            echo -e "# 策略：IPv4进随机IPv6出\n" >> /root/proxy_list.txt
+            echo -e "# 可能的出口IP: ${ipv6_addrs[*]}\n" >> /root/proxy_list.txt
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                echo "$ipv4:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
+            done
+            ;;
+        
+        4)  # IPv4进不同端口对应固定IPv6出
+            echo -e "# 策略：IPv4进不同端口对应固定IPv6出\n" >> /root/proxy_list.txt
+            for ((i = 0; i < port_count; i++)); do
+                current_port=$((socks_port + i))
+                current_ipv6=${ipv6_addrs[i]}
+                echo -e "\n# 端口 $current_port 对应的IPv6出口: $current_ipv6" >> /root/proxy_list.txt
+                for ipv4 in "${ipv4_addrs[@]}"; do
+                    echo "$ipv4:$current_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
+                done
+            done
+            ;;
+    esac
+
+    echo -e "\n代理列表已生成到: /root/proxy_list.txt"
+    
+    # 显示生成的代理列表
+    echo -e "\n${YELLOW}生成的代理列表：${NC}"
+    cat /root/proxy_list.txt
     return 0
 }
 
@@ -812,30 +861,42 @@ test_proxy_connectivity() {
         return 1
     fi
 
+    # 读取策略类型
+    local strategy_type=$(grep "^# 策略：" /root/proxy_list.txt | cut -d "：" -f 2)
+    echo -e "${YELLOW}当前策略: $strategy_type${NC}\n"
+
     while IFS= read -r line; do
-        if [[ $line =~ ^(.+):([0-9]+):(.+):(.+)$ ]]; then
-            ip="${BASH_REMATCH[1]}"
-            port="${BASH_REMATCH[2]}"
-            user="${BASH_REMATCH[3]}"
-            pass="${BASH_REMATCH[4]}"
+        # 跳过注释行和空行
+        [[ $line =~ ^#.*$ ]] || [[ -z $line ]] && continue
 
-            echo "正在测试 $ip:$port..."
+        if [[ $line =~ ^([^:]+):([0-9]+):([^:]+):([^:]+) ]]; then
+            local ip="${BASH_REMATCH[1]}"
+            local port="${BASH_REMATCH[2]}"
+            local user="${BASH_REMATCH[3]}"
+            local pass="${BASH_REMATCH[4]}"
 
-            if [[ $ip == *:* ]]; then
+            echo -e "${YELLOW}测试 $ip:$port...${NC}"
+
+            # 处理IPv6地址
+            if [[ $ip =~ ":" ]]; then
                 ip="[$ip]"
             fi
 
-            if curl -s --proxy socks5h://$user:$pass@$ip:$port http://httpbin.org/ip -o /dev/null; then
-                echo -e "${GREEN}$ip:$port 代理连接成功${NC}"
+            # 使用curl测试代理连接
+            if curl -s --max-time 10 --proxy socks5h://$user:$pass@$ip:$port http://api.ipify.org -o /dev/null; then
+                echo -e "${GREEN}✓ $ip:$port 连接成功${NC}"
+                
+                # 获取并显示出口IP
+                local exit_ip=$(curl -s --max-time 10 --proxy socks5h://$user:$pass@$ip:$port http://api.ipify.org)
+                echo -e "${GREEN}  出口IP: $exit_ip${NC}"
             else
-                echo -e "${RED}$ip:$port 代理连接失败${NC}"
+                echo -e "${RED}✗ $ip:$port 连接失败${NC}"
             fi
-        else
-            echo -e "${RED}行格式不正确: $line${NC}"
+            echo ""
         fi
     done < /root/proxy_list.txt
 
-    echo "代理连通性测试完成。"
+    echo -e "${GREEN}代理连通性测试完成。${NC}"
     return 0
 }
 
