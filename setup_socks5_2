@@ -687,9 +687,6 @@ clear_proxy_rules() {
     return 0
 }
 
-# ... 前面的代码保持不变 ...
-
-# 在这个位置添加缺失的函数 (在 clear_proxy_rules 函数之后，ipv6_manager_menu 之前)
 
 # 测试代理连通性
 test_proxy_connectivity() {
@@ -761,10 +758,6 @@ setup_bandwidth_control() {
     echo "INFO: 带宽控制设置完成。"
     return 0
 }
-
-# IPv6管理菜单
-ipv6_manager_menu() {
-    # ... 后面的代码保持不变 ...
 
 # IPv6管理菜单
 ipv6_manager_menu() {
