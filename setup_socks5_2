@@ -6,13 +6,6 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# 默认配置
-DEFAULT_START_PORT=20000
-DEFAULT_SOCKS_USERNAME="userb"
-DEFAULT_SOCKS_PASSWORD="passwordb"
-DEFAULT_WS_PATH="/ws"
-DEFAULT_UUID=$(cat /proc/sys/kernel/random/uuid)
-
 # 使用说明
 show_usage() {
     echo -e "${YELLOW}=== 代理服务器配置流程 ===${NC}"
@@ -21,10 +14,11 @@ show_usage() {
     echo -e "2. BBR加速 - 优化网络性能"
     echo -e "3. IPv6管理 - 配置IPv6地址（可选）"
     echo -e "4. 带宽控制 - 设置流量限制"
-    echo -e "5. 配置代理服务和IP策略"
-    echo -e "6. 连通性测试 - 验证代理是否正常工作"
+    echo -e "5. SOCKS5设置 - 配置代理服务"
+    echo -e "6. IP策略 - 设置进出流量规则"
+    echo -e "7. 连通性测试 - 验证代理是否正常工作"
     echo -e "${GREEN}提示：首次使用请按照顺序依次配置${NC}"
-    echo -e "${RED}注意：清除规则(选项8)会重置所有设置${NC}\n"
+    echo -e "${RED}注意：清除规则(选项9)会重置所有设置${NC}\n"
 }
 
 # 系统检测模块
@@ -54,53 +48,54 @@ detect_system() {
 }
 
 # 软件安装模块
+check_and_install_unzip() {
+    if ! command -v unzip &> /dev/null; then
+        echo "未安装unzip，正在安装..."
+        if [ "$ID" == "centos" ]; then
+            yum install unzip -y
+        else
+            apt-get update && apt-get install unzip -y
+        fi
+    fi
+    return 0
+}
+
+check_and_install_iptables() {
+    if ! command -v iptables &> /dev/null; then
+        echo "未安装iptables，正在安装..."
+        if [ "$ID" == "centos" ]; then
+            yum install iptables-services -y
+            systemctl enable iptables
+        else
+            apt-get update && apt-get install iptables-persistent -y
+        fi
+    fi
+    return 0
+}
+
+# 系统检查模块
+check_ipv6() {
+    if ! sysctl -a 2>/dev/null | grep -q "net.ipv6.conf.all.disable_ipv6 = 0"; then
+        echo "启用IPv6支持..."
+        sysctl -w net.ipv6.conf.all.disable_ipv6=0
+        sysctl -w net.ipv6.conf.default.disable_ipv6=0
+        echo "net.ipv6.conf.all.disable_ipv6 = 0" >> /etc/sysctl.conf
+        echo "net.ipv6.conf.default.disable_ipv6 = 0" >> /etc/sysctl.conf
+        sysctl -p
+    fi
+    return 0
+}
+
+# Xray安装模块
 install_xray() {
-    echo "安装 Xray..."
-    apt-get update && apt-get install unzip -y || yum install unzip -y
-
-    wget -q https://github.com/XTLS/Xray-core/releases/download/v1.8.3/Xray-linux-64.zip -O /tmp/xray.zip
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}下载 Xray 失败${NC}"
-        return 1
-    fi
-
-    unzip -o /tmp/xray.zip -d /tmp/xray_temp
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}解压 Xray 失败${NC}"
-        return 1
-    fi
-
-    mv /tmp/xray_temp/xray /usr/local/bin/xrayL
-    chmod +x /usr/local/bin/xrayL
-    rm -rf /tmp/xray_temp /tmp/xray.zip
-
-    mkdir -p /etc/xrayL
-
-    cat <<EOF >/etc/systemd/system/xrayL.service
-[Unit]
-Description=XrayL Service
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/xrayL -c /etc/xrayL/config.toml
-Restart=on-failure
-User=nobody
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload
-    systemctl enable xrayL.service
-    systemctl start xrayL.service
-
-    if systemctl status xrayL.service | grep -q "running"; then
-        echo "Xray 安装并启动完成."
-    else
-        echo -e "${RED}Xray 服务未能成功启动，请检查日志。${NC}"
-        journalctl -u xrayL.service -n 20 --no-pager
-    fi
+    echo "正在从GitHub下载Xray..."
+    check_and_install_unzip
+    wget --no-check-certificate -O /tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
+    unzip /tmp/xray.zip -d /usr/local/bin
+    rm -f /tmp/xray.zip
+    chmod +x /usr/local/bin/xray
+    echo "Xray已下载并设置为可执行。"
+    return 0
 }
 
 # 环境配置模块
@@ -116,749 +111,288 @@ setup_environment() {
     iptables-save
 
     install_xray
+    echo "创建Xray服务文件..."
+    cat <<EOF > /etc/systemd/system/xray.service
+[Unit]
+Description=The Xray Proxy Server
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/xray -c /etc/xray/serve.toml
+ExecStop=/bin/kill -s QUIT \$MAINPID
+Restart=always
+RestartSec=15s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    echo "启动Xray服务..."
+    $service_manager daemon-reload
+    $service_manager enable xray
+    $service_manager start xray
     echo "环境配置完成。"
     return 0
 }
 
-# IPv6相关函数
-generate_random_hex() {
-    local length=$1
-    head -c $((length/2)) /dev/urandom | hexdump -ve '1/1 "%.2x"'
-}
-
-get_main_interface() {
-    MAIN_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
-    if [ -z "$MAIN_INTERFACE" ]; then
-        echo -e "${RED}错误: 无法检测到主网卡${NC}"
-        return 1
-    fi
-    echo $MAIN_INTERFACE
-}
-
-get_ipv6_prefix() {
-    local interface=$1
-    local current_ipv6=$(ip -6 addr show dev $interface | grep "scope global" | grep -v "temporary" | head -n1 | awk '{print $2}')
-
-    if [ -z "$current_ipv6" ]; then
-        echo -e "${RED}错误: 未检测到IPv6地址${NC}" >&2
-        return 1
-    fi
-
-    local ipv6_addr=$(echo "$current_ipv6" | cut -d'/' -f1)
-    local prefix=$(echo "$ipv6_addr" | sed -E 's/:[^:]+:[^:]+:[^:]+:[^:]+$/::/')
-
-    if [ -z "$prefix" ]; then
-        echo -e "${RED}错误: 无法提取IPv6前缀${NC}" >&2
-        return 1
-    fi
-
-    echo "$prefix"
-}
-
-add_random_ipv6() {
-    local num=$1
-    local interface=$(get_main_interface)
-    if [ $? -ne 0 ]; then
-        return 1
-    fi
-
-    local prefix=$(get_ipv6_prefix "$interface")
-    if [ $? -ne 0 ]; then
-        return 1
-    fi
-
-    echo -e "${YELLOW}准备添加IPv6地址:${NC}"
-    echo "使用网络接口: $interface"
-    echo "使用IPv6前缀: $prefix"
-    echo "计划添加数量: $num"
-
-    local count=0
-    local attempts=0
-    local max_attempts=$((num * 3))
-
-    while [ $count -lt $num ] && [ $attempts -lt $max_attempts ]; do
-        ((attempts++))
-        local suffix=$(printf "%04x:%04x:%04x:%04x" \
-            $((RANDOM % 65536)) \
-            $((RANDOM % 65536)) \
-            $((RANDOM % 65536)) \
-            $((RANDOM % 65536)))
-
-        local NEW_IPV6="${prefix%::}:${suffix}"
-
-        echo -e "\n${YELLOW}尝试添加新地址: $NEW_IPV6${NC}"
-        if ip -6 addr add "$NEW_IPV6/64" dev "$interface" 2>/dev/null; then
-            echo -e "${GREEN}成功添加IPv6地址: $NEW_IPV6${NC}"
-            ((count++))
-
-            # 创建持久化配置
-            mkdir -p /etc/network/interfaces.d
-            echo "iface $interface inet6 static" >> /etc/network/interfaces.d/60-ipv6-addresses
-            echo "    address $NEW_IPV6/64" >> /etc/network/interfaces.d/60-ipv6-addresses
-            echo "" >> /etc/network/interfaces.d/60-ipv6-addresses
-        else
-            echo -e "${RED}添加地址失败: $NEW_IPV6${NC}"
-        fi
-    done
-
-    if [ $count -lt $num ]; then
-        echo -e "${RED}警告: 只成功添加了 $count 个地址（目标: $num）${NC}"
-    fi
-
-    show_current_ipv6 "$interface"
-}
-
-delete_all_ipv6() {
-    local interface=$(get_main_interface)
-    if [ $? -ne 0 ]; then
-        return 1
-    fi
-
-    local CONFIG_FILE="/etc/network/interfaces.d/60-ipv6-addresses"
-    if [ -f "$CONFIG_FILE" ]; then
-        rm -f "$CONFIG_FILE"
-        echo -e "${GREEN}已删除配置文件${NC}"
-    fi
-
-    for addr in $(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}'); do
-        ip -6 addr del $addr dev $interface
-        echo -e "${YELLOW}已删除IPv6地址: $addr${NC}"
-    done
-
-    echo -e "${GREEN}所有配置的IPv6地址已删除${NC}"
-}
-
-show_current_ipv6() {
-    local interface=$1
-    echo -e "${YELLOW}当前IPv6地址列表：${NC}"
-    local ipv6_list=$(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80")
-    if [ -z "$ipv6_list" ]; then
-        echo -e "${RED}未检测到任何IPv6地址${NC}"
-        return 1
-    fi
-    echo "$ipv6_list"
-}
-
-# 带宽控制功能
-setup_bandwidth_control() {
-    echo -e "${YELLOW}配置带宽控制...${NC}"
-    
-    local interfaces=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2}')
-    
-    echo "检测到的网络接口："
-    echo "$interfaces"
-    
-    read -p "请输入要限制的总带宽(Mbps): " bandwidth
-    
-    if ! [[ "$bandwidth" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}请输入有效的数字${NC}"
-        return 1
-    fi
-
-    for interface in $interfaces; do
-        tc qdisc del dev $interface root 2>/dev/null
-        tc qdisc add dev $interface root handle 1: htb default 10
-        tc class add dev $interface parent 1: classid 1:1 htb rate ${bandwidth}mbit ceil ${bandwidth}mbit
-        tc class add dev $interface parent 1:1 classid 1:10 htb rate ${bandwidth}mbit ceil ${bandwidth}mbit
-        
-        echo -e "${GREEN}接口 $interface 带宽已限制为 ${bandwidth}Mbps${NC}"
-    done
-}
-
-# BBR加速功能
-enable_bbr() {
-    echo -e "${YELLOW}正在配置BBR...${NC}"
-    
-    if lsmod | grep -q bbr; then
-        echo -e "${GREEN}BBR 已经启用${NC}"
-        return 0
-    fi
-    
-    if [[ $(uname -r | cut -d. -f1) -lt 4 ]]; then
-        echo -e "${RED}当前内核版本不支持BBR，需要4.9或更高版本${NC}"
-        return 1
-    fi
-
-    cat >> /etc/sysctl.conf <<EOF
-net.core.default_qdisc=fq
-net.ipv4.tcp_congestion_control=bbr
-EOF
-
-    sysctl -p
-
-    if sysctl net.ipv4.tcp_congestion_control | grep -q bbr; then
-        echo -e "${GREEN}BBR 配置成功${NC}"
-    else
-        echo -e "${RED}BBR 配置失败${NC}"
-    fi
-}
-
-# 生成代理列表
-# 生成代理列表
-generate_proxy_list() {
-    local start_port=$1
-    local type=$2
-    local username=$3
-    local password=$4
-    local uuid=$5
-    local ws_path=$6
-    local strategy=$7
-
+# IP策略配置模块
+configure_ip_strategy() {
+    local strategy=$1
+    declare -n port_map=$2
+    mkdir -p /etc/xray
+    echo -n "" > /etc/xray/serve.toml
     echo -n "" > /root/proxy_list.txt
-    local port=$start_port
 
     case $strategy in
-        1) # 同IP进同IP出 - 所有IP使用相同端口
-            for ip in "${IPV4_ADDRESSES[@]}"; do
-                if [ "$type" == "socks" ]; then
-                    echo "${ip}:${start_port}:${username}:${password}" >> /root/proxy_list.txt
-                else
-                    local vmess_json=$(jq -n \
-                        --arg add "$ip" \
-                        --arg port "$start_port" \
-                        --arg id "$uuid" \
-                        --arg path "$ws_path" \
-                        '{v:"2",ps:"",add:$add,port:$port,id:$id,aid:"0",net:"ws",type:"",host:"",path:$path,tls:""}')
-                    local vmess_encoded=$(echo -n "$vmess_json" | base64 -w0)
-                    echo "vmess://$vmess_encoded" >> /root/proxy_list.txt
-                fi
+        1)  # 同IP进同IP出
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+listen = "$ipv4"
+port = $socks_port
+protocol = "socks"
+tag = "in_$ipv4"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+[[outbounds]]
+protocol = "freedom"
+tag = "out_$ipv4"
+[outbounds.settings]
+domainStrategy = "UseIPv4"
+sendThrough = "$ipv4"
+
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_$ipv4"]
+outboundTag = "out_$ipv4"
+EOF
+                echo "$ipv4:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
             done
             ;;
-            
-        2) # IPv4进随机IPv4出 - 只用第一个IPv4地址
-            if [ "$type" == "socks" ]; then
-                echo "${IPV4_ADDRESSES[0]}:${start_port}:${username}:${password}" >> /root/proxy_list.txt
-            else
-                local vmess_json=$(jq -n \
-                    --arg add "${IPV4_ADDRESSES[0]}" \
-                    --arg port "$start_port" \
-                    --arg id "$uuid" \
-                    --arg path "$ws_path" \
-                    '{v:"2",ps:"",add:$add,port:$port,id:$id,aid:"0",net:"ws",type:"",host:"",path:$path,tls:""}')
-                local vmess_encoded=$(echo -n "$vmess_json" | base64 -w0)
-                echo "vmess://$vmess_encoded" >> /root/proxy_list.txt
-            fi
+        
+        2)  # IPv4进随机IPv4出
+            # 配置入站
+            ipv4_inbound="${ipv4_addrs[0]}"
+            cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+listen = "$ipv4_inbound"
+port = $socks_port
+protocol = "socks"
+tag = "in_$ipv4_inbound"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+EOF
+            echo "$ipv4_inbound:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
+
+            # 配置出站
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                cat <<EOF >> /etc/xray/serve.toml
+[[outbounds]]
+protocol = "freedom"
+tag = "out_$ipv4"
+[outbounds.settings]
+domainStrategy = "UseIPv4"
+sendThrough = "$ipv4"
+
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_$ipv4_inbound"]
+outboundTag = "out_$ipv4"
+EOF
+            done
             ;;
-            
-        3) # IPv4进随机IPv6出 - 只用第一个IPv4地址
-            if [ "$type" == "socks" ]; then
-                echo "${IPV4_ADDRESSES[0]}:${start_port}:${username}:${password}" >> /root/proxy_list.txt
-            else
-                local vmess_json=$(jq -n \
-                    --arg add "${IPV4_ADDRESSES[0]}" \
-                    --arg port "$start_port" \
-                    --arg id "$uuid" \
-                    --arg path "$ws_path" \
-                    '{v:"2",ps:"",add:$add,port:$port,id:$id,aid:"0",net:"ws",type:"",host:"",path:$path,tls:""}')
-                local vmess_encoded=$(echo -n "$vmess_json" | base64 -w0)
-                echo "vmess://$vmess_encoded" >> /root/proxy_list.txt
-            fi
+    
+        3)  # IPv4进随机IPv6出
+            # 配置入站
+            ipv4_inbound="${ipv4_addrs[0]}"
+            cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+listen = "$ipv4_inbound"
+port = $socks_port
+protocol = "socks"
+tag = "in_$ipv4_inbound"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+EOF
+            echo "$ipv4_inbound:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
+
+            # 配置出站
+            for ipv6 in "${ipv6_addrs[@]}"; do
+                cat <<EOF >> /etc/xray/serve.toml
+[[outbounds]]
+protocol = "freedom"
+tag = "out_$ipv6"
+[outbounds.settings]
+domainStrategy = "UseIPv6"
+sendThrough = "$ipv6"
+
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_$ipv4_inbound"]
+outboundTag = "out_$ipv6"
+EOF
+            done
             ;;
-            
-        4) # IPv4进固定IPv6出 - 每个端口对应一个IPv6
-            local ipv6_count=${#IPV6_ADDRESSES[@]}
-            for ((i=0; i<ipv6_count; i++)); do
-                if [ "$type" == "socks" ]; then
-                    echo "${IPV4_ADDRESSES[0]}:$((start_port+i)):${username}:${password}" >> /root/proxy_list.txt
-                else
-                    local vmess_json=$(jq -n \
-                        --arg add "${IPV4_ADDRESSES[0]}" \
-                        --arg port "$((start_port+i))" \
-                        --arg id "$uuid" \
-                        --arg path "$ws_path" \
-                        '{v:"2",ps:"",add:$add,port:$port,id:$id,aid:"0",net:"ws",type:"",host:"",path:$path,tls:""}')
-                    local vmess_encoded=$(echo -n "$vmess_json" | base64 -w0)
-                    echo "vmess://$vmess_encoded" >> /root/proxy_list.txt
-                fi
+    
+        4)  # IPv4进，不同端口对应固定IPv6出
+            for port in "${!port_map[@]}"; do
+                ipv6=${port_map[$port]}
+                cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+listen = "${ipv4_addrs[0]}"
+port = $port
+protocol = "socks"
+tag = "in_$port"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+[[outbounds]]
+protocol = "freedom"
+tag = "out_$port"
+[outbounds.settings]
+domainStrategy = "UseIPv6"
+sendThrough = "$ipv6"
+
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_$port"]
+outboundTag = "out_$port"
+EOF
+                echo "${ipv4_addrs[0]}:$port:$socks_user:$socks_pass" >> /root/proxy_list.txt
             done
             ;;
     esac
 
-    echo -e "${GREEN}代理列表已生成：/root/proxy_list.txt${NC}"
-    echo -e "${YELLOW}策略说明:${NC}"
-    case $strategy in
-        1) echo "同IP进出: 所有入站IP使用相同端口 ${start_port}" ;;
-        2) echo "随机IPv4出: 使用第一个IPv4地址入站,随机IPv4出站" ;;
-        3) echo "随机IPv6出: 使用第一个IPv4地址入站,随机IPv6出站" ;;
-        4) echo "固定IPv6出: 使用第一个IPv4地址入站,每个端口对应固定IPv6出站" ;;
-    esac
-}
-
-
-# 同IP进出策略
-config_same_ip_strategy() {
-    local config=""
-    local port=$START_PORT
-
-    for ip in "${IPV4_ADDRESSES[@]}"; do
-        if [ "$PROXY_TYPE" == "socks" ]; then
-            config+=$(cat <<EOF
-[[inbounds]]
-listen = "$ip"
-port = $port
-protocol = "socks"
-tag = "in_$ip"
-[inbounds.settings]
-auth = "password"
-udp = true
-[[inbounds.settings.accounts]]
-user = "$SOCKS_USERNAME"
-pass = "$SOCKS_PASSWORD"
-
-EOF
-)
-        else
-            config+=$(cat <<EOF
-[[inbounds]]
-listen = "$ip"
-port = $port
-protocol = "vmess"
-tag = "in_$ip"
-[inbounds.settings]
-[[inbounds.settings.clients]]
-id = "$UUID"
-[inbounds.streamSettings]
-network = "ws"
-[inbounds.streamSettings.wsSettings]
-path = "$WS_PATH"
-
-EOF
-)
-        fi
-
-        config+=$(cat <<EOF
-[[outbounds]]
-protocol = "freedom"
-tag = "out_$ip"
-[outbounds.settings]
-domainStrategy = "UseIPv4"
-sendThrough = "$ip"  # 确保使用相同IP出站
-
-[[routing.rules]]
-type = "field"
-inboundTag = ["in_$ip"]
-outboundTag = "out_$ip"
-
-EOF
-)
-        ((port++))
-    done
-
-    echo -e "$config" > /etc/xrayL/config.toml
-}
-
-# IPv4进随机IPv4出策略 - 大约在脚本的第900行左右
-config_random_ipv4_strategy() {
-    local config=""
-    
-    # 只使用第一个IPv4地址作为入站
-    if [ "$PROXY_TYPE" == "socks" ]; then
-        config+=$(cat <<EOF
-[[inbounds]]
-listen = "${IPV4_ADDRESSES[0]}"
-port = $START_PORT
-protocol = "socks"
-tag = "socks_in"
-[inbounds.settings]
-auth = "password"
-udp = true
-[[inbounds.settings.accounts]]
-user = "$SOCKS_USERNAME"
-pass = "$SOCKS_PASSWORD"
-
-EOF
-)
-    else
-        config+=$(cat <<EOF
-[[inbounds]]
-listen = "${IPV4_ADDRESSES[0]}"
-port = $START_PORT
-protocol = "vmess"
-tag = "vmess_in"
-[inbounds.settings]
-[[inbounds.settings.clients]]
-id = "$UUID"
-[inbounds.streamSettings]
-network = "ws"
-[inbounds.streamSettings.wsSettings]
-path = "$WS_PATH"
-
-EOF
-)
+    # 检查配置文件
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
+        echo -e "${RED}Xray 配置验证失败${NC}"
+        return 1
     fi
 
-    config+=$(cat <<EOF
-[[outbounds]]
-protocol = "freedom"
-tag = "random_ipv4_out"
-[outbounds.settings]
-domainStrategy = "UseIPv4"
+    # 重启 Xray 服务
+    systemctl restart xray
+    sleep 2
 
-[[routing.rules]]
-type = "field"
-inboundTag = ["${PROXY_TYPE}_in"]
-outboundTag = "random_ipv4_out"
-
-EOF
-)
-    echo -e "$config" > /etc/xrayL/config.toml
-}
-
-# IPv4进随机IPv6出策略 - 大约在脚本的第1000行左右
-config_random_ipv6_strategy() {
-    local config=""
-    
-    if [ "$PROXY_TYPE" == "socks" ]; then
-        config+=$(cat <<EOF
-[[inbounds]]
-listen = "${IPV4_ADDRESSES[0]}"
-port = $START_PORT
-protocol = "socks"
-tag = "socks_in"
-[inbounds.settings]
-auth = "password"
-udp = true
-[[inbounds.settings.accounts]]
-user = "$SOCKS_USERNAME"
-pass = "$SOCKS_PASSWORD"
-
-EOF
-)
-    else
-        config+=$(cat <<EOF
-[[inbounds]]
-listen = "${IPV4_ADDRESSES[0]}"
-port = $START_PORT
-protocol = "vmess"
-tag = "vmess_in"
-[inbounds.settings]
-[[inbounds.settings.clients]]
-id = "$UUID"
-[inbounds.streamSettings]
-network = "ws"
-[inbounds.streamSettings.wsSettings]
-path = "$WS_PATH"
-
-EOF
-)
+    if ! systemctl is-active --quiet xray; then
+        echo -e "${RED}Xray 服务启动失败${NC}"
+        systemctl status xray
+        return 1
     fi
 
-    config+=$(cat <<EOF
-[[outbounds]]
-protocol = "freedom"
-tag = "random_ipv6_out"
-[outbounds.settings]
-domainStrategy = "UseIPv6"
-
-[[routing.rules]]
-type = "field"
-inboundTag = ["${PROXY_TYPE}_in"]
-outboundTag = "random_ipv6_out"
-
-EOF
-)
-    echo -e "$config" > /etc/xrayL/config.toml
+    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
+    echo "代理列表已生成：/root/proxy_list.txt"
+    return 0
 }
 
-# IPv4进固定IPv6出策略 - 大约在脚本的第1100行左右
-config_fixed_ipv6_strategy() {
-    local config=""
-    local port=$START_PORT
-    
-    for ((i=0; i<${#IPV6_ADDRESSES[@]}; i++)); do
-        if [ "$PROXY_TYPE" == "socks" ]; then
-            config+=$(cat <<EOF
-[[inbounds]]
-listen = "${IPV4_ADDRESSES[0]}"
-port = $((START_PORT + i))
-protocol = "socks"
-tag = "in_port_$((START_PORT + i))"
-[inbounds.settings]
-auth = "password"
-udp = true
-[[inbounds.settings.accounts]]
-user = "$SOCKS_USERNAME"
-pass = "$SOCKS_PASSWORD"
-
-EOF
-)
-        else
-            config+=$(cat <<EOF
-[[inbounds]]
-listen = "${IPV4_ADDRESSES[0]}"
-port = $((START_PORT + i))
-protocol = "vmess"
-tag = "in_port_$((START_PORT + i))"
-[inbounds.settings]
-[[inbounds.settings.clients]]
-id = "$UUID"
-[inbounds.streamSettings]
-network = "ws"
-[inbounds.streamSettings.wsSettings]
-path = "$WS_PATH"
-
-EOF
-)
-        fi
-
-        config+=$(cat <<EOF
-[[outbounds]]
-protocol = "freedom"
-tag = "out_ipv6_$i"
-[outbounds.settings]
-domainStrategy = "UseIPv6"
-sendThrough = "${IPV6_ADDRESSES[$i]}"
-
-[[routing.rules]]
-type = "field"
-inboundTag = ["in_port_$((START_PORT + i))"]
-outboundTag = "out_ipv6_$i"
-
-EOF
-)
-    done
-    
-    echo -e "$config" > /etc/xrayL/config.toml
+# 代理设置模块
+set_socks5_credentials() {
+    read -p "请输入SOCKS5起始端口: " socks_port
+    read -p "请输入用户名: " socks_user
+    read -p "请输入密码: " socks_pass
+    set_ip_strategy
+    echo "SOCKS5端口、用户名和密码设置完成。"
+    return 0
 }
 
+set_ip_strategy() {
+    echo "配置IP进出策略..."
 
+    # 如果没有之前设置的信息，先获取
+    if [ -z "$socks_port" ] || [ -z "$socks_user" ] || [ -z "$socks_pass" ]; then
+        read -p "请输入SOCKS5起始端口: " socks_port
+        read -p "请输入用户名: " socks_user
+        read -p "请输入密码: " socks_pass
+    fi
 
-# 配置代理服务和IP策略的组合配置函数
-configure_proxy_and_strategy() {
-    echo -e "${YELLOW}配置代理服务和IP策略${NC}"
-    
-    # 选择代理类型
-    echo "1. SOCKS5代理"
-    echo "2. VMESS代理"
-    read -p "请选择代理类型 [1-2]: " proxy_type
+    # 创建追踪目录和文件
+    mkdir -p /etc/xray/track
+    touch /etc/xray/track/ipv4_used.txt
+    touch /etc/xray/track/ipv6_used.txt
 
-    # 选择IP策略
-    echo -e "\n请选择IP进出策略："
+    # 获取IPv4和IPv6地址列表 
+    ipv4_addrs=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
+    ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
+
+    echo "当前IPv4地址: ${ipv4_addrs[@]}"
+    echo "当前IPv6地址: ${ipv6_addrs[@]}"
+
+    echo "请选择IP进出策略："
     echo "1. 同IP进同IP出（默认）"
     echo "2. IPv4进随机IPv4出（不重复直到耗尽）"
     echo "3. IPv4进随机IPv6出（不重复直到耗尽）"
     echo "4. IPv4进，不同端口对应固定IPv6出（自动分配）"
-    read -p "请选择策略 [1-4]: " strategy
+    read -p "请输入选项 [1-4]: " strategy
 
-    # 获取基本配置
-    read -p "起始端口 (默认 $DEFAULT_START_PORT): " START_PORT
-    START_PORT=${START_PORT:-$DEFAULT_START_PORT}
-
-    case $proxy_type in
-        1) 
-            read -p "SOCKS 账号 (默认 $DEFAULT_SOCKS_USERNAME): " SOCKS_USERNAME
-            SOCKS_USERNAME=${SOCKS_USERNAME:-$DEFAULT_SOCKS_USERNAME}
-            read -p "SOCKS 密码 (默认 $DEFAULT_SOCKS_PASSWORD): " SOCKS_PASSWORD
-            SOCKS_PASSWORD=${SOCKS_PASSWORD:-$DEFAULT_SOCKS_PASSWORD}
-            PROXY_TYPE="socks"
-            ;;
-        2)
-            read -p "UUID (默认随机): " UUID
-            UUID=${UUID:-$DEFAULT_UUID}
-            read -p "WebSocket 路径 (默认 $DEFAULT_WS_PATH): " WS_PATH
-            WS_PATH=${WS_PATH:-$DEFAULT_WS_PATH}
-            PROXY_TYPE="vmess"
-            ;;
-        *)
-            echo -e "${RED}无效的代理类型选择${NC}"
-            return 1
-            ;;
-    esac
-
-    # 获取当前可用的IP地址
-    IPV4_ADDRESSES=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
-    IPV6_ADDRESSES=($(ip -6 addr show | grep "inet6" | grep "scope global" | grep -v "temporary" | awk '{print $2}' | cut -d'/' -f1))
-
-    # 验证IP地址可用性
-    if [ ${#IPV4_ADDRESSES[@]} -eq 0 ]; then
-        echo -e "${RED}错误: 未检测到可用的IPv4地址${NC}"
-        return 1
-    fi
-
-    if [ "$strategy" = "3" ] || [ "$strategy" = "4" ]; then
-        if [ ${#IPV6_ADDRESSES[@]} -eq 0 ]; then
-            echo -e "${RED}错误: 未检测到可用的IPv6地址，无法使用IPv6策略${NC}"
-            return 1
-        fi
-    fi
-
-    # 清除现有配置
-    rm -f /etc/xrayL/config.toml
-    rm -rf /etc/xrayL/track
-    mkdir -p /etc/xrayL/track
-
-    # 根据选择的策略生成配置
     case $strategy in
-        1) 
-            config_same_ip_strategy
-            generate_proxy_list "$START_PORT" "$PROXY_TYPE" "$SOCKS_USERNAME" "$SOCKS_PASSWORD" "$UUID" "$WS_PATH" "$strategy"
+        4)
+            # 获取当前可用的IPv6地址数量
+            ipv6_count=${#ipv6_addrs[@]}
+            echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
+
+            while true; do
+                read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
+                if ! [[ "$port_count" =~ ^[0-9]+$ ]]; then
+                    echo -e "${RED}请输入有效的数字${NC}"
+                    continue
+                fi
+
+                if [ "$port_count" -gt "$ipv6_count" ]; then
+                    echo -e "${RED}错误: 端口数量($port_count)不能超过可用的IPv6地址数量($ipv6_count)${NC}"
+                    continue
+                fi
+
+                if [ "$port_count" -lt 1 ]; then
+                    echo -e "${RED}错误: 端口数量必须大于0${NC}"
+                    continue
+                fi
+
+                break
+            done
+
+            declare -A port_ipv6_map
+
+            # 自动分配IPv6地址给端口
+            echo -e "\n${YELLOW}端口与IPv6地址的对应关系：${NC}"
+            for ((i=0; i<port_count; i++)); do
+                current_port=$((socks_port + i))
+                ipv6_index=$((i % ipv6_count))
+                port_ipv6_map[$current_port]=${ipv6_addrs[$ipv6_index]}
+                echo -e "${GREEN}端口 $current_port -> IPv6: ${ipv6_addrs[$ipv6_index]}${NC}"
+            done
+
+            read -p "确认使用以上配置？[y/N] " confirm
+            if [[ ! $confirm =~ ^[Yy]$ ]]; then
+                echo -e "${YELLOW}已取消配置${NC}"
+                return 1
+            fi
+
+            configure_ip_strategy $strategy port_ipv6_map
             ;;
-        2) 
-            config_random_ipv4_strategy
-            generate_proxy_list "$START_PORT" "$PROXY_TYPE" "$SOCKS_USERNAME" "$SOCKS_PASSWORD" "$UUID" "$WS_PATH" "$strategy"
-            ;;
-        3) 
-            config_random_ipv6_strategy
-            generate_proxy_list "$START_PORT" "$PROXY_TYPE" "$SOCKS_USERNAME" "$SOCKS_PASSWORD" "$UUID" "$WS_PATH" "$strategy"
-            ;;
-        4) 
-            config_fixed_ipv6_strategy
-            generate_proxy_list "$START_PORT" "$PROXY_TYPE" "$SOCKS_USERNAME" "$SOCKS_PASSWORD" "$UUID" "$WS_PATH" "$strategy"
+        1|2|3)
+            configure_ip_strategy $strategy
             ;;
         *)
             echo -e "${RED}无效的策略选择${NC}"
             return 1
             ;;
     esac
-
-    # 重启服务
-    systemctl restart xrayL
-
-    echo -e "${GREEN}配置完成${NC}"
-}
-
-# 生成代理列表已集成到 configure_proxy_and_strategy 函数中
-
-# 连通性测试
-test_proxy_connectivity() {
-    echo -e "${YELLOW}测试代理连通性...${NC}"
-    
-    if [ ! -f /root/proxy_list.txt ]; then
-        echo -e "${RED}代理列表文件不存在${NC}"
-        return 1
-    fi
-    
-    if ! command -v curl &> /dev/null; then
-        echo "安装curl..."
-        apt-get update && apt-get install -y curl || yum install -y curl
-    fi
-    
-    if ! command -v nc &> /dev/null; then
-        echo "安装netcat..."
-        apt-get update && apt-get install -y netcat || yum install -y nc
-    fi
-    
-    while IFS=: read -r ip port user pass; do
-        if [[ $ip == vmess* ]]; then
-            echo -e "\n${YELLOW}VMess代理暂不支持自动测试${NC}"
-            continue
-        fi
-        
-        echo -e "\n${YELLOW}测试代理: $ip:$port${NC}"
-        
-        # 处理IPv6地址
-        if [[ $ip =~ .*:.* ]]; then
-            test_ip="[$ip]"
-        else
-            test_ip="$ip"
-        fi
-        
-        # 首先测试端口是否开放
-        if ! nc -zv -w 5 "$ip" "$port" 2>/dev/null; then
-            echo -e "${RED}端口 $port 未开放${NC}"
-            continue
-        fi
-        
-        # 使用多个测试网站
-        local test_urls=(
-            "http://www.google.com"
-            "http://www.youtube.com"
-            "http://www.facebook.com"
-        )
-        
-        local success=false
-        for url in "${test_urls[@]}"; do
-            echo -e "测试访问 $url..."
-            if curl -sx "socks5://$user:$pass@$test_ip:$port" \
-                   -m 10 \
-                   --connect-timeout 5 \
-                   -IL "$url" 2>/dev/null | grep -q "HTTP/"; then
-                echo -e "${GREEN}✓ 代理工作正常${NC}"
-                success=true
-                break
-            fi
-        done
-        
-        if ! $success; then
-            echo -e "${RED}× 代理连接失败${NC}"
-            echo -e "${YELLOW}请手动验证代理配置${NC}"
-        fi
-        
-        # 添加延时避免过快测试
-        sleep 1
-    done < /root/proxy_list.txt
-}
-
-# 清理功能
-clear_proxy_rules() {
-    echo -e "${YELLOW}清理所有代理规则...${NC}"
-    
-    # 停止服务
-    systemctl stop xrayL
-    systemctl disable xrayL
-    
-    # 删除配置文件
-    rm -f /etc/xrayL/config.toml
-    rm -f /etc/systemd/system/xrayL.service
-    rm -rf /etc/xrayL
-    
-    # 清除防火墙规则
-    iptables -F
-    iptables -X
-    iptables -t nat -F
-    iptables -t mangle -F
-    
-    # 清除带宽限制
-    for interface in $(ip -o link show | awk -F': ' '$2 != "lo" {print $2}'); do
-        tc qdisc del dev $interface root 2>/dev/null
-    done
-    
-    # 删除代理列表
-    rm -f /root/proxy_list.txt
-    
-    # 删除IPv6配置
-    rm -f /etc/network/interfaces.d/60-ipv6-addresses
-    
-    echo -e "${GREEN}所有代理规则已清除${NC}"
-}
-
-# IPv6管理菜单
-ipv6_manager_menu() {
-    while true; do
-        echo -e "\n${YELLOW}IPv6地址管理${NC}"
-        echo "1. 添加随机IPv6地址"
-        echo "2. 删除所有IPv6地址"
-        echo "3. 显示当前IPv6地址"
-        echo "4. 返回主菜单"
-        
-        read -p "请选择操作 [1-4]: " choice
-        
-        case $choice in
-            1)
-                read -p "请输入要添加的IPv6地址数量: " num
-                if ! [[ "$num" =~ ^[0-9]+$ ]]; then
-                    echo -e "${RED}请输入有效的数字${NC}"
-                    continue
-                fi
-                add_random_ipv6 "$num"
-                ;;
-            2)
-                delete_all_ipv6
-                ;;
-            3)
-                local interface=$(get_main_interface)
-                if [ $? -eq 0 ]; then
-                    show_current_ipv6 "$interface"
-                fi
-                ;;
-            4)
-                return
-                ;;
-            *)
-                echo -e "${RED}无效选择${NC}"
-                ;;
-        esac
-    done
 }
 
 # 主菜单
@@ -868,34 +402,36 @@ show_menu() {
     echo "2. 启用BBR加速"
     echo "3. IPv6地址管理"
     echo "4. 设置带宽控制"
-    echo "5. 配置代理服务和IP策略"
-    echo "6. 测试代理连通性"
-    echo "7. 显示代理列表"
-    echo "8. 清除所有代理规则"
-    echo "9. 退出"
+    echo "5. SOCKS5代理设置"
+    echo "6. 设置IP进出策略"
+    echo "7. 测试代理连通性"
+    echo "8. 显示代理列表"
+    echo "9. 清除所有代理规则"
+    echo "10. 退出"
 
-    read -p "请输入选项 [1-9]: " option
+    read -p "请输入选项 [1-10]: " option
     case $option in
         1) setup_environment ;;
         2) enable_bbr ;;
         3) ipv6_manager_menu ;;
         4) setup_bandwidth_control ;;
-        5) configure_proxy_and_strategy ;;
-        6) test_proxy_connectivity ;;
-        7) 
+        5) set_socks5_credentials ;;
+        6) set_ip_strategy ;;
+        7) test_proxy_connectivity ;;
+        8) 
             if [ -f /root/proxy_list.txt ]; then
                 cat /root/proxy_list.txt
             else
                 echo -e "${RED}/root/proxy_list.txt 文件不存在。${NC}"
             fi
             ;;
-        8) clear_proxy_rules ;;
-        9) echo "退出脚本。"; exit ;;
-        *) echo -e "${RED}无效选项，请输入1-9之间的数字${NC}" ;;
+        9) clear_proxy_rules ;;
+        10) echo "退出脚本。"; exit ;;
+        *) echo -e "${RED}无效选项，请输入1-10之间的数字${NC}" ;;
     esac
 }
 
-# 主函数
+# 主程序
 main() {
     # 检查root权限
     if [ "$EUID" -ne 0 ]; then 
@@ -910,6 +446,9 @@ main() {
         exit 1
     fi
 
+    check_and_install_iptables
+    check_ipv6
+
     # 显示使用说明
     show_usage
 
@@ -921,4 +460,4 @@ main() {
 }
 
 # 运行主程序
-main "$@"
+main
