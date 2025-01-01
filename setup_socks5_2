@@ -182,12 +182,23 @@ add_ipv6_addresses() {
     echo "使用IPv6前缀: $prefix"
     echo "计划添加数量: $num"
     
+    # 获取现有地址列表
+    declare -A existing_addresses
+    while read -r addr; do
+        existing_addresses["$addr"]=1
+    done < <(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}' | cut -d'/' -f1)
+    
     # 显示当前地址
     echo -e "\n${YELLOW}当前IPv6地址:${NC}"
     ip -6 addr show dev $interface
     
     count=0
-    while [ $count -lt $num ]; do
+    attempts=0
+    max_attempts=$((num * 3))  # 设置最大尝试次数
+    
+    while [ $count -lt $num ] && [ $attempts -lt $max_attempts ]; do
+        ((attempts++))
+        
         # 生成后四组十六进制数
         suffix=$(printf "%04x:%04x:%04x:%04x" \
             $((RANDOM % 65536)) \
@@ -198,9 +209,16 @@ add_ipv6_addresses() {
         # 构建完整的IPv6地址
         NEW_IPV6="${prefix%::}:${suffix}"
         
+        # 检查是否已存在
+        if [ "${existing_addresses[$NEW_IPV6]}" == "1" ]; then
+            echo -e "${YELLOW}地址已存在，重新生成: $NEW_IPV6${NC}"
+            continue
+        fi
+        
         echo -e "\n${YELLOW}尝试添加新地址: $NEW_IPV6${NC}"
         if ip -6 addr add "$NEW_IPV6/64" dev "$interface" 2>/dev/null; then
             echo -e "${GREEN}成功添加IPv6地址: $NEW_IPV6${NC}"
+            existing_addresses["$NEW_IPV6"]=1
             ((count++))
             
             # 创建持久化配置
@@ -212,6 +230,10 @@ add_ipv6_addresses() {
             echo -e "${RED}添加地址失败: $NEW_IPV6${NC}"
         fi
     done
+    
+    if [ $count -lt $num ]; then
+        echo -e "${RED}警告: 只成功添加了 $count 个地址（目标: $num）${NC}"
+    fi
     
     # 显示最终结果
     echo -e "\n${YELLOW}更新后的IPv6地址:${NC}"
