@@ -178,25 +178,6 @@ get_main_interface() {
     echo $MAIN_INTERFACE
 }
 
-# SOCKS5凭证设置
-set_socks5_credentials() {
-    read -p "请输入SOCKS5端口: " socks_port
-    read -p "请输入用户名: " socks_user
-    read -p "请输入密码: " socks_pass
-    
-    # 保存凭证到文件
-    cat <<EOF > /etc/xray/credentials
-SOCKS_PORT=$socks_port
-SOCKS_USER=$socks_user
-SOCKS_PASS=$socks_pass
-EOF
-    
-    echo -e "${GREEN}SOCKS5凭证已保存${NC}"
-    
-    # 生成代理列表
-    generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
-}
-
 # BBR加速模块
 enable_bbr() {
     echo "启用BBR..."
@@ -253,6 +234,54 @@ setup_bandwidth_control() {
 
     echo "INFO: 带宽控制设置完成。"
     return 0
+}
+
+# SOCKS5凭证设置
+set_socks5_credentials() {
+    echo -e "${YELLOW}配置SOCKS5代理凭证${NC}"
+    
+    # 检查是否已有配置
+    if [ -f /etc/xray/credentials ]; then
+        echo -e "${YELLOW}检测到现有配置：${NC}"
+        source /etc/xray/credentials
+        echo "当前端口: $SOCKS_PORT"
+        echo "当前用户: $SOCKS_USER"
+        read -p "是否要更新配置？[y/N] " update
+        if [[ ! $update =~ ^[Yy]$ ]]; then
+            echo -e "${GREEN}保持现有配置${NC}"
+            return 0
+        fi
+    fi
+
+    read -p "请输入SOCKS5端口: " socks_port
+    read -p "请输入用户名: " socks_user
+    read -p "请输入密码: " socks_pass
+    
+    # 验证输入
+    if [[ ! "$socks_port" =~ ^[0-9]+$ ]] || [ "$socks_port" -lt 1 ] || [ "$socks_port" -gt 65535 ]; then
+        echo -e "${RED}错误：端口必须是1-65535之间的数字${NC}"
+        return 1
+    fi
+    
+    if [[ -z "$socks_user" || -z "$socks_pass" ]]; then
+        echo -e "${RED}错误：用户名和密码不能为空${NC}"
+        return 1
+    fi
+    
+    # 创建配置目录
+    mkdir -p /etc/xray
+    
+    # 保存凭证到文件
+    cat <<EOF > /etc/xray/credentials
+SOCKS_PORT=$socks_port
+SOCKS_USER=$socks_user
+SOCKS_PASS=$socks_pass
+EOF
+    
+    echo -e "${GREEN}SOCKS5凭证已保存${NC}"
+    
+    # 生成代理列表
+    generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
 }
 
 # IPv6相关函数
@@ -583,11 +612,11 @@ EOF
             done
             ;;
         
-        2)  # IPv4进随机IPv4出
-            echo -e "${YELLOW}配置IPv4轮询策略...${NC}"
-            # 配置入站
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
+2)  # IPv4进随机IPv4出
+    echo -e "${YELLOW}配置IPv4轮询策略...${NC}"
+    # 配置入站
+    for ipv4 in "${ipv4_addrs[@]}"; do
+        cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 listen = "$ipv4"
 port = $socks_port
@@ -600,11 +629,11 @@ udp = true
 user = "$socks_user"
 pass = "$socks_pass"
 EOF
-            done
+    done
 
-            # 为每个IPv4创建出站
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
+    # 为每个IPv4创建出站
+    for ipv4 in "${ipv4_addrs[@]}"; do
+        cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
 tag = "out_$ipv4"
@@ -612,34 +641,34 @@ tag = "out_$ipv4"
 domainStrategy = "UseIPv4"
 sendThrough = "$ipv4"
 EOF
-            done
+    done
 
-            # 创建负载均衡器
-            cat <<EOF >> /etc/xray/serve.toml
+    # 创建负载均衡器
+    cat <<EOF >> /etc/xray/serve.toml
 [[routing.balancers]]
 tag = "ipv4_balancer"
 strategy = "random"
 EOF
-            echo -n "selectors = [" >> /etc/xray/serve.toml
-            first=true
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                if [ "$first" = true ]; then
-                    echo -n "\"out_$ipv4\"" >> /etc/xray/serve.toml
-                    first=false
-                else
-                    echo -n ", \"out_$ipv4\"" >> /etc/xray/serve.toml
-                fi
-            done
-            echo "]" >> /etc/xray/serve.toml
+    echo -n "selectors = [" >> /etc/xray/serve.toml
+    first=true
+    for ipv4 in "${ipv4_addrs[@]}"; do
+        if [ "$first" = true ]; then
+            echo -n "\"out_$ipv4\"" >> /etc/xray/serve.toml
+            first=false
+        else
+            echo -n ", \"out_$ipv4\"" >> /etc/xray/serve.toml
+        fi
+    done
+    echo "]" >> /etc/xray/serve.toml
 
-            # 配置路由规则
-            cat <<EOF >> /etc/xray/serve.toml
+    # 配置路由规则
+    cat <<EOF >> /etc/xray/serve.toml
 [[routing.rules]]
 type = "field"
 network = ["tcp", "udp"]
 balancerTag = "ipv4_balancer"
 EOF
-            ;;
+    ;;
 
         3)  # IPv4进随机IPv6出
             echo -e "${YELLOW}配置IPv6轮询策略...${NC}"
