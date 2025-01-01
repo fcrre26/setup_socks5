@@ -569,8 +569,10 @@ set_ip_strategy() {
     read -p "请输入选项 [1-4]: " strategy
 
     case $strategy in
-        4)  # IPv4进，不同端口对应固定IPv6出
+              4)  # IPv4进，不同端口对应固定IPv6出
             # 为每个端口配置对应的IPv6出站
+            declare -A port_map  # 声明关联数组
+            
             for ((i=0; i<$port_count; i++)); do
                 current_port=$((socks_port + i))
                 if [ ${#ipv6_addrs[@]} -gt $i ]; then
@@ -581,6 +583,7 @@ set_ip_strategy() {
                 fi
             done
 
+            # 配置出站
             for port in "${!port_map[@]}"; do
                 ipv6=${port_map[$port]}
                 cat <<EOF >> /etc/xray/serve.toml
@@ -598,6 +601,7 @@ outboundTag = "out_${port}"
 EOF
             done
 
+            # 配置入站
             for port in "${!port_map[@]}"; do
                 for ipv4 in "${ipv4_addrs[@]}"; do
                     cat <<EOF >> /etc/xray/serve.toml
