@@ -230,12 +230,7 @@ add_ipv6_addresses() {
         echo "source /etc/network/interfaces.d/*" >> /etc/network/interfaces
     fi
 }
-
-        
-        # 构建完整的IPv6地址
-        prefix_base=$(echo "$prefix" | sed 's/::$//')
-        NEW_IPV6="${prefix_base}:${suffix}"
-        
+   
         if [ -z "${GENERATED_ADDRESSES[$NEW_IPV6]}" ]; then
             GENERATED_ADDRESSES[$NEW_IPV6]=1
             
