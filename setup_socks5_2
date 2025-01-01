@@ -453,34 +453,31 @@ outboundTag = "out"
 EOF
             ;;
     
-        4)  # IPv4进，不同端口对应固定IPv6出
-            # 为每个端口配置对应的IPv6出站
-            for port in "${!port_map[@]}"; do
-                ipv6=${port_map[$port]}
-                cat <<EOF >> /etc/xray/serve.toml
-[[outbounds]]
-protocol = "freedom"
-tag = "out_${port}"
-[outbounds.settings]
-domainStrategy = "UseIPv6"
-sendThrough = "$ipv6"
+        # 修订后的策略4配置逻辑
+4)  # IPv4进，不同端口对应固定IPv6出
+    declare -A port_ipv6_map  # 声明一个关联数组来存储端口和IPv6地址的映射
 
-[[routing.rules]]
-type = "field"
-inboundTag = ["in_${port}"]
-outboundTag = "out_${port}"
-EOF
-            done
+    # 确保有足够的IPv6地址用于映射
+    if [ ${#ipv6_addrs[@]} -lt "$port_count" ]; then
+        echo -e "${RED}错误: IPv6地址数量不足，无法为每个端口分配唯一的IPv6地址。${NC}"
+        return 1
+    fi
 
-            # 为每个端口配置入站
-            for port in "${!port_map[@]}"; do
-                for ipv4 in "${ipv4_addrs[@]}"; do
-                    cat <<EOF >> /etc/xray/serve.toml
+    # 为每个端口分配一个IPv6地址并存储在关联数组中
+    for i in $(seq 0 $((port_count - 1))); do
+        port=$((socks_port + i))
+        port_ipv6_map[$port]=${ipv6_addrs[i]}
+    done
+
+    # 为每个端口配置入站规则
+    for port in "${!port_ipv6_map[@]}"; do
+        for ipv4 in "${ipv4_addrs[@]}"; do
+            cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 listen = "$ipv4"
 port = $port
 protocol = "socks"
-tag = "in_${port}"
+tag = "in_$port"
 [inbounds.settings]
 auth = "password"
 udp = true
@@ -488,9 +485,27 @@ udp = true
 user = "$socks_user"
 pass = "$socks_pass"
 EOF
-                done
-            done
-            ;;
+        done
+    done
+
+    # 为每个端口配置出站规则
+    for port in "${!port_ipv6_map[@]}"; do
+        ipv6=${port_ipv6_map[$port]}
+        cat <<EOF >> /etc/xray/serve.toml
+[[outbounds]]
+protocol = "freedom"
+tag = "out_$port"
+[outbounds.settings]
+domainStrategy = "UseIPv6"
+sendThrough = "$ipv6"
+
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_$port"]
+outboundTag = "out_$port"
+EOF
+    done
+    ;;
     esac
 
     # 检查配置文件
