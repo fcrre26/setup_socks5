@@ -894,8 +894,10 @@ set_socks5_credentials() {
     read -p "请输入SOCKS5起始端口: " socks_port
     read -p "请输入用户名: " socks_user
     read -p "请输入密码: " socks_pass
-    set_ip_strategy
-    generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
+    
+    # 将凭证信息保存到全局变量
+    export socks_port socks_user socks_pass
+    
     echo "SOCKS5端口、用户名和密码设置完成。"
     return 0
 }
