@@ -597,21 +597,6 @@ set_ip_strategy() {
     esac
 }
 
-# 代理管理模块
-generate_proxy_list() {
-    local socks_port=$1
-    local socks_user=$2
-    local socks_pass=$3
-    local ips=($(hostname -I))
-    echo "生成代理列表文件..."
-    echo -n "" > /root/proxy_list.txt
-    for ip in "${ips[@]}"; do
-        echo "$ip:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
-    done
-    echo "代理列表文件已生成：/root/proxy_list.txt"
-    return 0
-}
-
 # 代理设置模块
 set_socks5_credentials() {
     read -p "请输入SOCKS5起始端口: " socks_port
