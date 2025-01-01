@@ -458,6 +458,18 @@ EOF
             for port in "${!port_map[@]}"; do
                 ipv6=${port_map[$port]}
                 cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+listen = "0.0.0.0"
+port = $port
+protocol = "socks"
+tag = "in_${port}"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
 [[outbounds]]
 protocol = "freedom"
 tag = "out_${port}"
@@ -471,26 +483,8 @@ inboundTag = ["in_${port}"]
 outboundTag = "out_${port}"
 EOF
             done
-
-            # 为每个端口配置入站
-            for port in "${!port_map[@]}"; do
-                for ipv4 in "${ipv4_addrs[@]}"; do
-                    cat <<EOF >> /etc/xray/serve.toml
-[[inbounds]]
-listen = "$ipv4"
-port = $port
-protocol = "socks"
-tag = "in_${port}"
-[inbounds.settings]
-auth = "password"
-udp = true
-[[inbounds.settings.accounts]]
-user = "$socks_user"
-pass = "$socks_pass"
-EOF
-                done
-            done
             ;;
+        # ... 其他策略 ...
     esac
 
     # 检查配置文件
