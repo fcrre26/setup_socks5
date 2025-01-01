@@ -197,6 +197,7 @@ add_ipv6_addresses() {
         fi
     done
 }
+
 # IP策略配置模块
 set_ip_strategy() {
     echo "配置IP进出策略..."
@@ -224,32 +225,22 @@ set_ip_strategy() {
     echo "1. 同IP进同IP出（默认）"
     echo "2. IPv4进随机IPv4出（不重复直到耗尽）"
     echo "3. IPv4进随机IPv6出（不重复直到耗尽）"
-    echo "4. IPv4进，不同端口对应固定IPv6出"
+    echo "4. IPv4进，不同端口对应固定IPv6出（自动分配）"
     read -p "请输入选项 [1-4]: " strategy
 
     case $strategy in
         4)
-            echo "配置端口与IPv6地址的对应关系"
+            echo "配置端口与IPv6地址的自动对应关系"
             read -p "请输入要配置的端口数量: " port_count
             declare -A port_ipv6_map
             
-            # 显示可用的IPv6地址
-            echo "可用的IPv6地址："
-            for i in "${!ipv6_addrs[@]}"; do
-                echo "$((i+1)). ${ipv6_addrs[i]}"
-            done
-            
-            # 配置每个端口对应的IPv6地址
+            # 自动分配IPv6地址给端口
             for ((i=0; i<port_count; i++)); do
                 current_port=$((socks_port + i))
-                echo "配置端口 $current_port"
-                read -p "请选择IPv6地址编号 [1-${#ipv6_addrs[@]}]: " ipv6_choice
-                if [[ $ipv6_choice =~ ^[0-9]+$ ]] && [ $ipv6_choice -ge 1 ] && [ $ipv6_choice -le ${#ipv6_addrs[@]} ]; then
-                    port_ipv6_map[$current_port]=${ipv6_addrs[$((ipv6_choice-1))]}
-                else
-                    echo "无效的选择，使用第一个IPv6地址"
-                    port_ipv6_map[$current_port]=${ipv6_addrs[0]}
-                fi
+                # 使用取模运算来循环使用IPv6地址
+                ipv6_index=$((i % ${#ipv6_addrs[@]}))
+                port_ipv6_map[$current_port]=${ipv6_addrs[$ipv6_index]}
+                echo "端口 $current_port 自动分配到 IPv6: ${ipv6_addrs[$ipv6_index]}"
             done
             configure_ip_strategy $strategy port_ipv6_map
             ;;
@@ -504,35 +495,7 @@ EOF
     echo "IP策略设置完成并成功启动服务"
     return 0
 }
-delete_all_ipv6() {
-    local interface=$1
-    
-    # 删除配置文件
-    CONFIG_FILE="/etc/network/interfaces.d/60-ipv6-addresses"
-    if [ -f "$CONFIG_FILE" ]; then
-        rm -f "$CONFIG_FILE"
-        echo -e "${GREEN}已删除配置文件${NC}"
-    fi
-    
-    # 删除所有非本地IPv6地址
-    for addr in $(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}'); do
-        ip -6 addr del $addr dev $interface
-        echo -e "${YELLOW}已删除IPv6地址: $addr${NC}"
-    done
-    
-    echo -e "${GREEN}所有配置的IPv6地址已删除${NC}"
-}
 
-show_current_ipv6() {
-    local interface=$1
-    echo -e "${YELLOW}当前IPv6地址列表：${NC}"
-    local ipv6_list=$(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80")
-    if [ -z "$ipv6_list" ]; then
-        echo -e "${RED}未检测到任何IPv6地址${NC}"
-        return 1
-    fi
-    echo "$ipv6_list"
-}
 
 # 代理设置模块
 set_socks5_credentials() {
