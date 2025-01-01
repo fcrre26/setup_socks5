@@ -453,23 +453,22 @@ outboundTag = "out"
 EOF
             ;;
 
-        4)  # IPv4进，不同端口对应固定IPv6出
-            # 为每个端口配置对应的IPv6出站
-            for port in "${!port_map[@]}"; do
-                ipv6=${port_map[$port]}
-                cat <<EOF >> /etc/xray/serve.toml
-[[inbounds]]
-listen = "0.0.0.0"
-port = $port
-protocol = "socks"
-tag = "in_${port}"
-[inbounds.settings]
-auth = "password"
-udp = true
-[[inbounds.settings.accounts]]
-user = "$socks_user"
-pass = "$socks_pass"
+# IPv4进，不同端口对应固定IPv6出（自动分配）
+declare -A port_map
+for ((i=0; i<$port_count; i++)); do
+    current_port=$((socks_port + i))
+    if [ ${#ipv6_addrs[@]} -gt $i ]; then
+        port_map[$current_port]=${ipv6_addrs[$i]}
+    else
+        echo -e "${RED}错误: IPv6地址数量不足以为所有端口提供唯一的地址${NC}"
+        return 1
+    fi
+done
 
+# 为每个端口配置对应的IPv6出站
+for port in "${!port_map[@]}"; do
+    ipv6=${port_map[$port]}
+    cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
 tag = "out_${port}"
@@ -482,7 +481,26 @@ type = "field"
 inboundTag = ["in_${port}"]
 outboundTag = "out_${port}"
 EOF
-            done
+done
+
+# 为每个端口配置入站
+for port in "${!port_map[@]}"; do
+    for ipv4 in "${ipv4_addrs[@]}"; do
+        cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+listen = "$ipv4"
+port = $port
+protocol = "socks"
+tag = "in_${port}"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+EOF
+    done
+done
             ;;
         # ... 其他策略 ...
     esac
