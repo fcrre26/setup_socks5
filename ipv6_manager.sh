@@ -135,160 +135,10 @@ EOF
     return 0
 }
 
-# IPv6相关函数
-generate_random_hex() {
-    local length=$1
-    head -c $((length/2)) /dev/urandom | hexdump -ve '1/1 "%.2x"'
-}
-
-get_main_interface() {
-    MAIN_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
-    if [ -z "$MAIN_INTERFACE" ]; then
-        echo -e "${RED}错误: 无法检测到主网卡${NC}"
-        return 1
-    fi
-    echo $MAIN_INTERFACE
-}
-
-get_ipv6_prefix() {
-    local interface=$1
-
-    # 获取非本地IPv6地址
-    local current_ipv6=$(ip -6 addr show dev $interface | grep "scope global" | grep -v "temporary" | head -n1 | awk '{print $2}')
-
-    if [ -z "$current_ipv6" ]; then
-        echo -e "${RED}错误: 未检测到IPv6地址${NC}" >&2
-        return 1
-    fi
-
-    # 从CIDR格式中提取地址部分
-    local ipv6_addr=$(echo "$current_ipv6" | cut -d'/' -f1)
-
-    # 提取前缀（前64位）
-    local prefix=$(echo "$ipv6_addr" | sed -E 's/:[^:]+:[^:]+:[^:]+:[^:]+$/::/')
-
-    if [ -z "$prefix" ]; then
-        echo -e "${RED}错误: 无法提取IPv6前缀${NC}" >&2
-        return 1
-    fi
-
-    echo "$prefix"
-}
-
-add_ipv6_addresses() {
-    local interface=$1
-    local prefix=$2
-    local num=$3
-
-    echo -e "${YELLOW}准备添加IPv6地址:${NC}"
-    echo "使用网络接口: $interface"
-    echo "使用IPv6前缀: $prefix"
-    echo "计划添加数量: $num"
-
-    # 获取现有地址列表
-    declare -A existing_addresses
-    while read -r addr; do
-        existing_addresses["$addr"]=1
-    done < <(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}' | cut -d'/' -f1)
-
-    # 显示当前地址
-    echo -e "\n${YELLOW}当前IPv6地址:${NC}"
-    ip -6 addr show dev $interface
-
-    count=0
-    attempts=0
-    max_attempts=$((num * 3))  # 设置最大尝试次数
-
-    while [ $count -lt $num ] && [ $attempts -lt $max_attempts ]; do
-        ((attempts++))
-
-        # 生成后四组十六进制数
-        suffix=$(printf "%04x:%04x:%04x:%04x" \
-            $((RANDOM % 65536)) \
-            $((RANDOM % 65536)) \
-            $((RANDOM % 65536)) \
-            $((RANDOM % 65536)))
-
-        # 构建完整的IPv6地址
-        NEW_IPV6="${prefix%::}:${suffix}"
-
-        # 检查是否已存在
-        if [ "${existing_addresses[$NEW_IPV6]}" == "1" ]; then
-            echo -e "${YELLOW}地址已存在，重新生成: $NEW_IPV6${NC}"
-            continue
-        fi
-
-        echo -e "\n${YELLOW}尝试添加新地址: $NEW_IPV6${NC}"
-        if ip -6 addr add "$NEW_IPV6/64" dev "$interface" 2>/dev/null; then
-            echo -e "${GREEN}成功添加IPv6地址: $NEW_IPV6${NC}"
-            existing_addresses["$NEW_IPV6"]=1
-            ((count++))
-
-            # 创建持久化配置
-            mkdir -p /etc/network/interfaces.d
-            echo "iface $interface inet6 static" >> /etc/network/interfaces.d/60-ipv6-addresses
-            echo "    address $NEW_IPV6/64" >> /etc/network/interfaces.d/60-ipv6-addresses
-            echo "" >> /etc/network/interfaces.d/60-ipv6-addresses
-        else
-            echo -e "${RED}添加地址失败: $NEW_IPV6${NC}"
-        fi
-    done
-
-    if [ $count -lt $num ]; then
-        echo -e "${RED}警告: 只成功添加了 $count 个地址（目标: $num）${NC}"
-    fi
-
-    # 显示最终结果
-    echo -e "\n${YELLOW}更新后的IPv6地址:${NC}"
-    ip -6 addr show dev $interface
-
-    # 确保配置文件存在
-    if [ ! -f "/etc/network/interfaces" ]; then
-        echo "auto lo" > /etc/network/interfaces
-        echo "iface lo inet loopback" >> /etc/network/interfaces
-        echo "" >> /etc/network/interfaces
-    fi
-
-    # 添加 source 指令（如果不存在）
-    if ! grep -q "source /etc/network/interfaces.d/*" /etc/network/interfaces; then
-        echo "source /etc/network/interfaces.d/*" >> /etc/network/interfaces
-    fi
-}
-
-delete_all_ipv6() {
-    local interface=$1
-
-    CONFIG_FILE="/etc/network/interfaces.d/60-ipv6-addresses"
-    if [ -f "$CONFIG_FILE" ]; then
-        rm -f "$CONFIG_FILE"
-        echo -e "${GREEN}已删除配置文件${NC}"
-    fi
-
-    for addr in $(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}'); do
-        ip -6 addr del $addr dev $interface
-        echo -e "${YELLOW}已删除IPv6地址: $addr${NC}"
-    done
-
-    echo -e "${GREEN}所有配置的IPv6地址已删除${NC}"
-}
-
-show_current_ipv6() {
-    local interface=$1
-    echo -e "${YELLOW}当前IPv6地址列表：${NC}"
-    local ipv6_list=$(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80")
-    if [ -z "$ipv6_list" ]; then
-        echo -e "${RED}未检测到任何IPv6地址${NC}"
-        return 1
-    fi
-    echo "$ipv6_list"
-}
-
-# ... [前面的代码]
-
 # IP策略配置模块
 configure_ip_strategy() {
     local strategy=$1
-    declare -n port_map_ref=$2  # 使用引用关联数组
+    declare -n port_map_ref=$2  # 使用引用关联数组（仅策略4需要）
 
     mkdir -p /etc/xray
     echo -n "" > /etc/xray/serve.toml
@@ -302,7 +152,7 @@ listen = "$ipv4"
 port = $socks_port
 protocol = "socks"
 tag = "in_$ipv4"
-[ inbounds.settings ]
+[inbounds.settings]
 auth = "password"
 udp = true
 [[inbounds.settings.accounts]]
@@ -312,7 +162,7 @@ pass = "$socks_pass"
 [[outbounds]]
 protocol = "freedom"
 tag = "out_$ipv4"
-[ outbounds.settings ]
+[outbounds.settings]
 domainStrategy = "UseIPv4"
 sendThrough = "$ipv4"
 
@@ -333,7 +183,7 @@ listen = "$ipv4"
 port = $socks_port
 protocol = "socks"
 tag = "in_$ipv4"
-[ inbounds.settings ]
+[inbounds.settings]
 auth = "password"
 udp = true
 [[inbounds.settings.accounts]]
@@ -379,7 +229,7 @@ EOF
 [[outbounds]]
 protocol = "freedom"
 tag = "out"
-[ outbounds.settings ]
+[outbounds.settings]
 domainStrategy = "UseIPv4"
 sendThrough = "$next_ip"
 
@@ -399,7 +249,7 @@ listen = "$ipv4"
 port = $socks_port
 protocol = "socks"
 tag = "in_$ipv4"
-[ inbounds.settings ]
+[inbounds.settings]
 auth = "password"
 udp = true
 [[inbounds.settings.accounts]]
@@ -445,7 +295,7 @@ EOF
 [[outbounds]]
 protocol = "freedom"
 tag = "out"
-[ outbounds.settings ]
+[outbounds.settings]
 domainStrategy = "UseIPv6"
 sendThrough = "$next_ipv6"
 
@@ -464,7 +314,7 @@ EOF
 [[outbounds]]
 protocol = "freedom"
 tag = "out_${port}"
-[ outbounds.settings ]
+[outbounds.settings]
 domainStrategy = "UseIPv6"
 sendThrough = "$ipv6"
 
@@ -484,7 +334,7 @@ listen = "$ipv4"
 port = $port
 protocol = "socks"
 tag = "in_${port}"
-[ inbounds.settings ]
+[inbounds.settings]
 auth = "password"
 udp = true
 [[inbounds.settings.accounts]]
@@ -495,6 +345,100 @@ EOF
             done
             ;;
     esac
+
+    # 检查配置文件
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
+        echo -e "${RED}Xray 配置验证失败${NC}"
+        return 1
+    fi
+
+    # 重启 Xray 服务
+    systemctl restart xray
+    sleep 2
+
+    if ! systemctl is-active --quiet xray; then
+        echo -e "${RED}Xray 服务启动失败${NC}"
+        systemctl status xray
+        return 1
+    fi
+
+    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
+    return 0
+}
+
+# IP策略设置函数
+set_ip_strategy() {
+    echo "配置IP进出策略..."
+
+    # 初始化IPv4和IPv6地址数组
+    ipv4_addrs=($(hostname -I | awk '{print $1}'))
+    ipv6_addrs=($(ip -6 addr show | grep -oP '(?<=inet6\s)[\da-f:]+' | grep -v '^fe80' | grep -v '^::1'))
+
+    echo "当前IPv4地址: ${ipv4_addrs[@]}"
+    echo "当前IPv6地址: ${ipv6_addrs[@]}"
+
+    echo "请选择IP进出策略："
+    echo "1. 同IP进同IP出（默认）"
+    echo "2. IPv4进随机IPv4出（不重复直到耗尽）"
+    echo "3. IPv4进随机IPv6出（不重复直到耗尽）"
+    echo "4. IPv4进，不同端口对应固定IPv6出（自动分配）"
+    read -p "请输入选项 [1-4]: " strategy
+
+    case $strategy in
+        2|3|4)
+            if [ "$strategy" -eq 4 ]; then
+                # 获取当前可用的IPv6地址数量
+                ipv6_count=${#ipv6_addrs[@]}
+                echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
+
+                while true; do
+                    read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
+                    if ! [[ "$port_count" =~ ^[0-9]+$ ]]; then
+                        echo -e "${RED}请输入有效的数字${NC}"
+                        continue
+                    fi
+
+                    if [ "$port_count" -gt "$ipv6_count" ]; then
+                        echo -e "${RED}错误: 端口数量($port_count)不能超过可用的IPv6地址数量($ipv6_count)${NC}"
+                        continue
+                    fi
+
+                    if [ "$port_count" -lt 1 ]; then
+                        echo -e "${RED}错误: 端口数量必须大于0${NC}"
+                        continue
+                    fi
+
+                    break
+                done
+
+                declare -A port_ipv6_map
+
+                # 自动分配IPv6地址给端口
+                echo -e "\n${YELLOW}端口与IPv6地址的对应关系：${NC}"
+                for ((i=0; i<port_count; i++)); do
+                    current_port=$((socks_port + i))
+                    ipv6_index=$i
+                    port_ipv6_map[$current_port]=${ipv6_addrs[$ipv6_index]}
+                    echo -e "${GREEN}端口 $current_port -> IPv6: ${ipv6_addrs[$ipv6_index]}${NC}"
+                done
+
+                read -p "确认使用以上配置？[y/N] " confirm
+                if [[ ! $confirm =~ ^[Yy]$ ]]; then
+                    echo -e "${YELLOW}已取消配置${NC}"
+                    return 1
+                fi
+
+                configure_ip_strategy $strategy port_ipv6_map
+            else
+                configure_ip_strategy $strategy
+            fi
+            ;;
+        *)
+            echo -e "${RED}无效的策略选择${NC}"
+            return 1
+            ;;
+    esac
+}
 
     # 检查配置文件
     if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
