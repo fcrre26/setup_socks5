@@ -168,9 +168,6 @@ delete_all_ipv6() {
 
 # IP策略配置模块
 set_ip_strategy() {
-
-# IP策略配置模块
-set_ip_strategy() {
     echo "配置IP进出策略..."
     
     # 如果没有之前设置的信息，先获取
