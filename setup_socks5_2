@@ -58,6 +58,19 @@ check_and_install_iptables() {
     return 0
 }
 
+# 系统检查模块
+check_ipv6() {
+    if ! sysctl -a 2>/dev/null | grep -q "net.ipv6.conf.all.disable_ipv6 = 0"; then
+        echo "启用IPv6支持..."
+        sysctl -w net.ipv6.conf.all.disable_ipv6=0
+        sysctl -w net.ipv6.conf.default.disable_ipv6=0
+        echo "net.ipv6.conf.all.disable_ipv6 = 0" >> /etc/sysctl.conf
+        echo "net.ipv6.conf.default.disable_ipv6 = 0" >> /etc/sysctl.conf
+        sysctl -p
+    fi
+    return 0
+}
+
 # 环境配置模块
 setup_environment() {
     echo "设置防火墙规则..."
