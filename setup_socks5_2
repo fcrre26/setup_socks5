@@ -543,7 +543,137 @@ set_ip_strategy() {
     read -p "请输入选项 [1-4]: " strategy
 
     case $strategy in
-        4)
+        1)  # 同IP进同IP出
+            # 清空配置文件
+            echo -n "" > /etc/xray/serve.toml
+            
+            # 为每个IPv4配置入站和对应的出站
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+port = $socks_port
+protocol = "socks"
+tag = "in_${ipv4//\./_}"
+listen = "$ipv4"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+[[outbounds]]
+protocol = "freedom"
+tag = "out_${ipv4//\./_}"
+[outbounds.settings]
+domainStrategy = "UseIPv4"
+sendThrough = "$ipv4"
+
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_${ipv4//\./_}"]
+outboundTag = "out_${ipv4//\./_}"
+
+EOF
+            done
+            generate_proxy_list 1
+            ;;
+
+        2)  # IPv4进随机IPv4出
+            # 清空配置文件
+            echo -n "" > /etc/xray/serve.toml
+            
+            # 为每个IPv4配置入站
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+port = $socks_port
+protocol = "socks"
+tag = "in_${ipv4//\./_}"
+listen = "$ipv4"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+EOF
+            done
+
+            # 配置一个共用的出站
+            next_ip=$(/etc/xray/track/select_next_ip.sh)
+            cat <<EOF >> /etc/xray/serve.toml
+[[outbounds]]
+protocol = "freedom"
+tag = "out_random_ipv4"
+[outbounds.settings]
+domainStrategy = "UseIPv4"
+sendThrough = "$next_ip"
+
+EOF
+
+            # 为每个入站配置路由规则
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                cat <<EOF >> /etc/xray/serve.toml
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_${ipv4//\./_}"]
+outboundTag = "out_random_ipv4"
+
+EOF
+            done
+            generate_proxy_list 2
+            ;;
+
+        3)  # IPv4进随机IPv6出
+            # 清空配置文件
+            echo -n "" > /etc/xray/serve.toml
+            
+            # 为每个IPv4配置入站
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+port = $socks_port
+protocol = "socks"
+tag = "in_${ipv4//\./_}"
+listen = "$ipv4"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+EOF
+            done
+
+            # 配置一个共用的出站
+            next_ipv6=$(/etc/xray/track/select_next_ipv6.sh)
+            cat <<EOF >> /etc/xray/serve.toml
+[[outbounds]]
+protocol = "freedom"
+tag = "out_random_ipv6"
+[outbounds.settings]
+domainStrategy = "UseIPv6"
+sendThrough = "$next_ipv6"
+
+EOF
+
+            # 为每个入站配置路由规则
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                cat <<EOF >> /etc/xray/serve.toml
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_${ipv4//\./_}"]
+outboundTag = "out_random_ipv6"
+
+EOF
+            done
+            generate_proxy_list 3
+            ;;
+
+        4)  # IPv4进，不同端口对应固定IPv6出
             # 获取当前可用的IPv6地址数量
             ipv6_count=${#ipv6_addrs[@]}
             echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
@@ -585,16 +715,73 @@ set_ip_strategy() {
                 return 1
             fi
 
-            configure_ip_strategy $strategy port_ipv6_map
-            ;;
-        1|2|3)
-            configure_ip_strategy $strategy
+            # 清空配置文件
+            echo -n "" > /etc/xray/serve.toml
+            
+            # 为每个端口和IPv6对生成配置
+            for port in "${!port_map[@]}"; do
+                ipv6=${port_map[$port]}
+                
+                # 为每个IPv4配置入站
+                for ipv4 in "${ipv4_addrs[@]}"; do
+                    cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+port = $port
+protocol = "socks"
+tag = "in_${port}"
+listen = "$ipv4"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+EOF
+                done
+
+                # 为每个端口配置对应的IPv6出站
+                cat <<EOF >> /etc/xray/serve.toml
+[[outbounds]]
+protocol = "freedom"
+tag = "out_${port}"
+[outbounds.settings]
+domainStrategy = "UseIPv6"
+sendThrough = "$ipv6"
+
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_${port}"]
+outboundTag = "out_${port}"
+
+EOF
+            done
+            generate_proxy_list 4
             ;;
         *)
             echo -e "${RED}无效的策略选择${NC}"
             return 1
             ;;
     esac
+
+    # 检查配置文件
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
+        echo -e "${RED}Xray 配置验证失败${NC}"
+        return 1
+    fi
+
+    # 重启 Xray 服务
+    systemctl restart xray
+    sleep 2
+
+    if ! systemctl is-active --quiet xray; then
+        echo -e "${RED}Xray 服务启动失败${NC}"
+        systemctl status xray
+        return 1
+    fi
+
+    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
+    return 0
 }
 
 # 代理管理模块
