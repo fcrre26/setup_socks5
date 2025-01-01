@@ -790,29 +790,7 @@ EOF
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
     return 0
 }
-
-    # 检查配置文件
-    echo -e "${YELLOW}验证Xray配置...${NC}"
-    if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
-        echo -e "${RED}Xray 配置验证失败${NC}"
-        return 1
-    fi
-
-    # 重启 Xray 服务
-    echo -e "${YELLOW}重启Xray服务...${NC}"
-    systemctl restart xray
-    sleep 2
-
-    if ! systemctl is-active --quiet xray; then
-        echo -e "${RED}Xray 服务启动失败${NC}"
-        systemctl status xray
-        return 1
-    fi
-
-    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
-    return 0
-}
-
+   
 # 代理管理模块
 generate_proxy_list() {
     local socks_port=$1
