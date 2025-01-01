@@ -178,6 +178,25 @@ get_main_interface() {
     echo $MAIN_INTERFACE
 }
 
+# SOCKS5凭证设置
+set_socks5_credentials() {
+    read -p "请输入SOCKS5端口: " socks_port
+    read -p "请输入用户名: " socks_user
+    read -p "请输入密码: " socks_pass
+    
+    # 保存凭证到文件
+    cat <<EOF > /etc/xray/credentials
+SOCKS_PORT=$socks_port
+SOCKS_USER=$socks_user
+SOCKS_PASS=$socks_pass
+EOF
+    
+    echo -e "${GREEN}SOCKS5凭证已保存${NC}"
+    
+    # 生成代理列表
+    generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
+}
+
 # BBR加速模块
 enable_bbr() {
     echo "启用BBR..."
