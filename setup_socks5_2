@@ -397,6 +397,9 @@ EOF
             local tag_num=0
             for port in "${!port_map[@]}"; do
                 ipv6=${port_map[$port]}
+                # 确保IPv6地址格式正确（移除CIDR前缀如果存在）
+                ipv6=$(echo "$ipv6" | cut -d'/' -f1)
+                
                 for ipv4 in "${ipv4_addrs[@]}"; do
                     cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
@@ -416,7 +419,7 @@ protocol = "freedom"
 tag = "out_${tag_num}"
 [outbounds.settings]
 domainStrategy = "UseIPv6"
-sendThrough = "$ipv6"
+sendThrough = "[${ipv6}]"
 
 [[routing.rules]]
 type = "field"
@@ -449,6 +452,7 @@ EOF
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
     return 0
 }
+
 
 
 # IP策略设置函数
