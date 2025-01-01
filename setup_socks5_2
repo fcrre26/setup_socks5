@@ -133,132 +133,6 @@ install_xray() {
 }
 
 # IPv6相关函数
-get_main_interface() {
-    local interface
-    
-    # 尝试从默认路由获取主接口
-    interface=$(ip route | grep default | awk '{print $5}' | head -n1)
-    
-    # 如果上面的方法失败，尝试获取第一个非lo的活动接口
-    if [ -z "$interface" ]; then
-        interface=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2}' | head -n1)
-    fi
-    
-    # 检查是否找到接口
-    if [ -z "$interface" ]; then
-        echo -e "${RED}错误：无法找到有效的网络接口${NC}" >&2
-        return 1
-    fi
-    
-    # 验证接口是否存在
-    if ! ip link show "$interface" >/dev/null 2>&1; then
-        echo -e "${RED}错误：接口 $interface 不存在${NC}" >&2
-        return 1
-    fi
-    
-    # 检查接口状态并尝试启用
-    if ! ip link show "$interface" | grep -q "UP"; then
-        echo -e "${YELLOW}正在启用接口 $interface...${NC}" >&2
-        ip link set dev "$interface" up
-        sleep 1
-    fi
-    
-    echo "$interface"
-}
-
-# IPv6管理菜单
-ipv6_manager_menu() {
-    while true; do
-        echo -e "\n${YELLOW}IPv6地址管理工具${NC}"
-        echo "1. 添加随机IPv6地址"
-        echo "2. 删除所有IPv6地址"
-        echo "3. 显示当前IPv6地址"
-        echo "4. 测试IPv6连通性"
-        echo "0. 返回主菜单"
-        
-        read -p "请选择操作 [0-4]: " ipv6_option
-        
-        case $ipv6_option in
-            1)
-                # 获取网络接口
-                local interface
-                if ! interface=$(get_main_interface); then
-                    echo -e "${RED}无法获取网络接口${NC}"
-                    continue
-                fi
-                echo -e "${GREEN}使用网络接口: $interface${NC}"
-                
-                # 获取IPv6前缀
-                local prefix
-                if ! prefix=$(get_ipv6_prefix "$interface"); then
-                    echo -e "${RED}无法获取IPv6前缀${NC}"
-                    continue
-                fi
-                
-                # 获取要添加的地址数量
-                read -p "请输入要添加的IPv6地址数量: " num_addresses
-                if [[ ! "$num_addresses" =~ ^[0-9]+$ ]]; then
-                    echo -e "${RED}请输入有效的数字${NC}"
-                    continue
-                fi
-                
-                # 添加IPv6地址
-                add_ipv6_addresses "$interface" "$prefix" "$num_addresses"
-                ;;
-            2)
-                local interface
-                if ! interface=$(get_main_interface); then
-                    echo -e "${RED}无法获取网络接口${NC}"
-                    continue
-                fi
-                delete_all_ipv6 "$interface"
-                ;;
-            3)
-                local interface
-                if ! interface=$(get_main_interface); then
-                    echo -e "${RED}无法获取网络接口${NC}"
-                    continue
-                fi
-                show_current_ipv6 "$interface"
-                ;;
-            4)
-                local interface
-                if ! interface=$(get_main_interface); then
-                    echo -e "${RED}无法获取网络接口${NC}"
-                    continue
-                fi
-                test_proxy_connectivity
-                ;;
-            0)
-                return
-                ;;
-            *)
-                echo -e "${RED}无效的选择${NC}"
-                ;;
-        esac
-        
-        echo -e "\n按回车键继续..."
-        read
-    done
-}
-
-# 显示当前IPv6地址
-show_current_ipv6() {
-    local interface="$1"
-    echo -e "${YELLOW}当前IPv6地址列表：${NC}"
-    
-    # 检查接口是否存在
-    if ! ip link show "$interface" >/dev/null 2>&1; then
-        echo -e "${RED}错误：接口 $interface 不存在${NC}"
-        return 1
-    fi
-    
-    # 显示所有非本地IPv6地址
-    if ! ip -6 addr show dev "$interface" | grep -v fe80 | grep inet6; then
-        echo -e "${YELLOW}未找到IPv6地址${NC}"
-    fi
-}
-
 # 获取IPv6前缀
 get_ipv6_prefix() {
     local interface="$1"
@@ -270,8 +144,8 @@ get_ipv6_prefix() {
         return 1
     fi
     
-    # 获取第一个非本地IPv6地址的前缀
-    prefix=$(ip -6 addr show dev "$interface" | grep -v fe80 | grep inet6 | head -n1 | awk '{print $2}' | cut -d'/' -f1 | sed 's/:[^:]*$/::/')
+    # 获取第一个非本地IPv6地址的前缀（修改格式）
+    prefix=$(ip -6 addr show dev "$interface" | grep -v fe80 | grep inet6 | head -n1 | awk '{print $2}' | cut -d'/' -f1 | sed 's/\([0-9a-f]\+:[0-9a-f]\+:[0-9a-f]\+:[0-9a-f]\+\).*$/\1/')
     
     if [ -z "$prefix" ]; then
         echo -e "${RED}错误：未找到有效的IPv6前缀${NC}" >&2
@@ -279,12 +153,6 @@ get_ipv6_prefix() {
     fi
     
     echo "$prefix"
-}
-
-# 生成随机十六进制数
-generate_random_hex() {
-    local length="$1"
-    head -c "$((length/2))" /dev/urandom | hexdump -ve '1/1 "%.2x"'
 }
 
 # 添加IPv6地址
@@ -304,43 +172,40 @@ add_ipv6_addresses() {
     # 生成并添加地址
     local count=0
     while [ $count -lt "$num" ]; do
-        local suffix=$(generate_random_hex 8)
-        local new_addr="${prefix}${suffix}"
+        # 生成4组随机十六进制数
+        local suffix1=$(generate_random_hex 4)
+        local suffix2=$(generate_random_hex 4)
+        local suffix3=$(generate_random_hex 4)
+        local suffix4=$(generate_random_hex 4)
+        
+        # 构建完整的IPv6地址
+        local new_addr="${prefix}:${suffix1}:${suffix2}:${suffix3}:${suffix4}"
+        
+        echo -e "${YELLOW}尝试添加地址: $new_addr${NC}"
         
         if ip -6 addr add "$new_addr/64" dev "$interface" 2>/dev/null; then
             echo -e "${GREEN}已添加IPv6地址: $new_addr${NC}"
             ((count++))
         else
             echo -e "${RED}添加地址失败: $new_addr${NC}"
+            # 显示详细错误信息
+            ip -6 addr add "$new_addr/64" dev "$interface"
         fi
         
         sleep 0.5
     done
     
     echo -e "${GREEN}完成添加 $count 个IPv6地址${NC}"
+    
+    # 显示当前配置的所有IPv6地址
+    echo -e "\n${YELLOW}当前配置的IPv6地址：${NC}"
+    ip -6 addr show dev "$interface" | grep -v fe80 | grep inet6
 }
 
-# 删除所有IPv6地址
-delete_all_ipv6() {
-    local interface="$1"
-    
-    echo -e "${YELLOW}正在删除IPv6地址...${NC}"
-    
-    # 检查接口是否存在
-    if ! ip link show "$interface" >/dev/null 2>&1; then
-        echo -e "${RED}错误：接口 $interface 不存在${NC}"
-        return 1
-    fi
-    
-    # 删除所有非本地IPv6地址
-    ip -6 addr show dev "$interface" | grep inet6 | grep -v fe80 | while read -r line; do
-        local addr=$(echo "$line" | awk '{print $2}')
-        if ip -6 addr del "$addr" dev "$interface" 2>/dev/null; then
-            echo -e "${GREEN}已删除地址: $addr${NC}"
-        fi
-    done
-    
-    echo -e "${GREEN}已删除所有IPv6地址${NC}"
+# 生成随机十六进制数（修改为生成指定长度）
+generate_random_hex() {
+    local length="$1"
+    tr -dc 'a-f0-9' < /dev/urandom | head -c "$length"
 }
 
 # 添加IPv6地址
