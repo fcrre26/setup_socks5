@@ -197,97 +197,6 @@ add_ipv6_addresses() {
         fi
     done
 }
-
-delete_all_ipv6() {
-    local interface=$1
-    
-    # 删除配置文件
-    CONFIG_FILE="/etc/network/interfaces.d/60-ipv6-addresses"
-    if [ -f "$CONFIG_FILE" ]; then
-        rm -f "$CONFIG_FILE"
-        echo -e "${GREEN}已删除配置文件${NC}"
-    fi
-    
-    # 删除所有非本地IPv6地址
-    for addr in $(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}'); do
-        ip -6 addr del $addr dev $interface
-        echo -e "${YELLOW}已删除IPv6地址: $addr${NC}"
-    done
-    
-    echo -e "${GREEN}所有配置的IPv6地址已删除${NC}"
-}
-
-show_current_ipv6() {
-    local interface=$1
-    echo -e "${YELLOW}当前IPv6地址列表：${NC}"
-    local ipv6_list=$(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80")
-    if [ -z "$ipv6_list" ]; then
-        echo -e "${RED}未检测到任何IPv6地址${NC}"
-        return 1
-    fi
-    echo "$ipv6_list"
-}
-
-# 代理设置模块
-set_socks5_credentials() {
-    read -p "请输入SOCKS5端口: " socks_port
-    read -p "请输入用户名: " socks_user
-    read -p "请输入密码: " socks_pass
-    configure_xray "$socks_port" "$socks_user" "$socks_pass"
-    generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
-    echo "SOCKS5端口、用户名和密码设置完成。"
-    return 0
-}
-
-configure_xray() {
-    echo "配置Xray..."
-    mkdir -p /etc/xray
-    echo -n "" > /etc/xray/serve.toml
-    local ips=($(hostname -I))
-    for ((i = 0; i < ${#ips[@]}; i++)); do
-        cat <<EOF >> /etc/xray/serve.toml
-[[inbounds]]
-listen = "${ips[i]}"
-port = $1
-protocol = "socks"
-tag = "$((i+1))"
-[inbounds.settings]
-auth = "password"
-udp = true
-ip = "${ips[i]}"
-[[inbounds.settings.accounts]]
-user = "$2"
-pass = "$3"
-[[routing.rules]]
-type = "field"
-inboundTag = "$((i+1))"
-outboundTag = "$((i+1))"
-[[outbounds]]
-sendThrough = "${ips[i]}" 
-protocol = "freedom" 
-tag = "$((i+1))"
-
-EOF
-    done
-    echo "Xray配置已完成。"
-    return 0
-}
-
-# 代理管理模块
-generate_proxy_list() {
-    local socks_port=$1
-    local socks_user=$2
-    local socks_pass=$3
-    local ips=($(hostname -I))
-    echo "生成代理列表文件..."
-    echo -n "" > /root/proxy_list.txt
-    for ip in "${ips[@]}"; do
-        echo "$ip:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
-    done
-    echo "代理列表文件已生成：/root/proxy_list.txt"
-    return 0
-}
-
 # IP策略配置模块
 set_ip_strategy() {
     echo "配置IP进出策略..."
@@ -595,6 +504,108 @@ EOF
     echo "IP策略设置完成并成功启动服务"
     return 0
 }
+delete_all_ipv6() {
+    local interface=$1
+    
+    # 删除配置文件
+    CONFIG_FILE="/etc/network/interfaces.d/60-ipv6-addresses"
+    if [ -f "$CONFIG_FILE" ]; then
+        rm -f "$CONFIG_FILE"
+        echo -e "${GREEN}已删除配置文件${NC}"
+    fi
+    
+    # 删除所有非本地IPv6地址
+    for addr in $(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}'); do
+        ip -6 addr del $addr dev $interface
+        echo -e "${YELLOW}已删除IPv6地址: $addr${NC}"
+    done
+    
+    echo -e "${GREEN}所有配置的IPv6地址已删除${NC}"
+}
+
+show_current_ipv6() {
+    local interface=$1
+    echo -e "${YELLOW}当前IPv6地址列表：${NC}"
+    local ipv6_list=$(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80")
+    if [ -z "$ipv6_list" ]; then
+        echo -e "${RED}未检测到任何IPv6地址${NC}"
+        return 1
+    fi
+    echo "$ipv6_list"
+}
+
+# 代理设置模块
+set_socks5_credentials() {
+    read -p "请输入SOCKS5端口: " socks_port
+    read -p "请输入用户名: " socks_user
+    read -p "请输入密码: " socks_pass
+    configure_xray "$socks_port" "$socks_user" "$socks_pass"
+    generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
+    echo "SOCKS5端口、用户名和密码设置完成。"
+    return 0
+}
+
+configure_xray() {
+    echo "配置Xray..."
+    mkdir -p /etc/xray
+    echo -n "" > /etc/xray/serve.toml
+    local ips=($(hostname -I))
+    for ((i = 0; i < ${#ips[@]}; i++)); do
+        cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+listen = "${ips[i]}"
+port = $1
+protocol = "socks"
+tag = "$((i+1))"
+[inbounds.settings]
+auth = "password"
+udp = true
+ip = "${ips[i]}"
+[[inbounds.settings.accounts]]
+user = "$2"
+pass = "$3"
+[[routing.rules]]
+type = "field"
+inboundTag = "$((i+1))"
+outboundTag = "$((i+1))"
+[[outbounds]]
+sendThrough = "${ips[i]}" 
+protocol = "freedom" 
+tag = "$((i+1))"
+
+EOF
+    done
+    echo "Xray配置已完成。"
+    return 0
+}
+
+# 代理管理模块
+generate_proxy_list() {
+    local socks_port=$1
+    local socks_user=$2
+    local socks_pass=$3
+    local ips=($(hostname -I))
+    echo "生成代理列表文件..."
+    echo -n "" > /root/proxy_list.txt
+    for ip in "${ips[@]}"; do
+        echo "$ip:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
+    done
+    echo "代理列表文件已生成：/root/proxy_list.txt"
+    return 0
+}
+
+# 工具函数
+get_active_interfaces() {
+    interfaces=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2}')
+    echo "检测到的活动网络接口: $interfaces"
+    return 0
+}
+
+get_active_ip_count() {
+    active_ip_count=$(hostname -I | wc -w)
+    echo "当前活动的IP数量: $active_ip_count"
+    return 0
+}
 
 # 带宽控制和BBR相关函数
 setup_bandwidth_control() {
@@ -652,42 +663,6 @@ enable_bbr() {
     return 0
 }
 
-# 工具函数
-get_active_interfaces() {
-    interfaces=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2}')
-    echo "检测到的活动网络接口: $interfaces"
-    return 0
-}
-
-get_active_ip_count() {
-    active_ip_count=$(hostname -I | wc -w)
-    echo "当前活动的IP数量: $active_ip_count"
-    return 0
-}
-
-# 清理函数
-clear_proxy_rules() {
-    echo "清除所有代理规则..."
-    $service_manager stop xray
-    $service_manager disable xray
-    rm -f /etc/xray/serve.toml
-    rm -f /etc/systemd/system/xray.service
-    iptables -F
-    iptables -X
-    iptables -t nat -F
-    iptables -t mangle -F
-    ip6tables -F
-    ip6tables -X
-    ip6tables -t nat -F
-    ip6tables -t mangle -F
-    iptables-save
-    ip6tables-save
-    rm -f /root/proxy_list.txt
-    echo "已清除所有代理规则，回到未安装SOCKS5代理的状态。"
-    return 0
-}
-
-
 # 测试代理连通性
 test_proxy_connectivity() {
     echo "测试代理连通性..."
@@ -724,38 +699,25 @@ test_proxy_connectivity() {
     return 0
 }
 
-# 带宽控制设置
-setup_bandwidth_control() {
-    get_active_interfaces
-    get_active_ip_count
-
-    read -p "请输入VPS的总带宽（例如50M）: " total_bandwidth
-
-    if [[ ! $total_bandwidth =~ ^[0-9]+M$ ]]; then
-        echo "ERROR: 输入格式错误，请输入类似'50M'的格式。"
-        return 1
-    fi
-
-    if [ "$active_ip_count" -eq 0 ]; then
-        echo "INFO: 没有活动的IP，跳过带宽设置。"
-        return 0
-    fi
-
-    local rate=$(echo "${total_bandwidth%M} / $active_ip_count" | bc)Mbit
-
-    echo "INFO: 设置带宽控制..."
-    for interface in $interfaces; do
-        tc qdisc del dev $interface root 2>/dev/null
-        tc qdisc add dev $interface root handle 1: htb default 30
-        tc class add dev $interface parent 1: classid 1:1 htb rate $total_bandwidth
-
-        for ip in $(hostname -I); do
-            tc class add dev $interface parent 1:1 classid 1:10 htb rate ${rate} ceil ${rate}
-            tc filter add dev $interface protocol ip parent 1:0 prio 1 u32 match ip dst $ip flowid 1:10
-        done
-    done
-
-    echo "INFO: 带宽控制设置完成。"
+# 清理函数
+clear_proxy_rules() {
+    echo "清除所有代理规则..."
+    $service_manager stop xray
+    $service_manager disable xray
+    rm -f /etc/xray/serve.toml
+    rm -f /etc/systemd/system/xray.service
+    iptables -F
+    iptables -X
+    iptables -t nat -F
+    iptables -t mangle -F
+    ip6tables -F
+    ip6tables -X
+    ip6tables -t nat -F
+    ip6tables -t mangle -F
+    iptables-save
+    ip6tables-save
+    rm -f /root/proxy_list.txt
+    echo "已清除所有代理规则，回到未安装SOCKS5代理的状态。"
     return 0
 }
 
