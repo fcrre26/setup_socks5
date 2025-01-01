@@ -232,55 +232,59 @@ show_current_ipv6() {
     echo "$ipv6_list"
 }
 
-# 在主菜单的 case 语句中的 IPv6 管理选项（选项3）部分替换为：
-3)
-    while true; do
-        echo -e "\n${YELLOW}IPv6地址管理工具${NC}"
-        echo "1. 添加随机IPv6地址"
-        echo "2. 删除所有IPv6地址"
-        echo "3. 显示当前IPv6地址"
-        echo "4. 测试IPv6连通性"
-        echo "0. 返回主菜单"
-        
-        read -p "请选择操作 [0-4]: " ipv6_option
-        
-        case $ipv6_option in
-            1)
-                INTERFACE=$(get_main_interface)
-                PREFIX=$(get_ipv6_prefix $INTERFACE)
-                if [ $? -eq 0 ]; then
-                    read -p "请输入要添加的IPv6地址数量: " num_addresses
-                    if [[ "$num_addresses" =~ ^[0-9]+$ ]]; then
-                        add_ipv6_addresses $INTERFACE $PREFIX $num_addresses
-                    else
-                        echo -e "${RED}请输入有效的数字${NC}"
+# 修改主菜单中的 case 语句，将选项3替换为：
+case $option in
+    # ... 其他选项 ...
+    3)
+        while true; do
+            echo -e "\n${YELLOW}IPv6地址管理工具${NC}"
+            echo "1. 添加随机IPv6地址"
+            echo "2. 删除所有IPv6地址"
+            echo "3. 显示当前IPv6地址"
+            echo "4. 测试IPv6连通性"
+            echo "0. 返回主菜单"
+            
+            read -p "请选择操作 [0-4]: " ipv6_option
+            
+            case $ipv6_option in
+                1)
+                    INTERFACE=$(get_main_interface)
+                    PREFIX=$(get_ipv6_prefix $INTERFACE)
+                    if [ $? -eq 0 ]; then
+                        read -p "请输入要添加的IPv6地址数量: " num_addresses
+                        if [[ "$num_addresses" =~ ^[0-9]+$ ]]; then
+                            add_ipv6_addresses $INTERFACE $PREFIX $num_addresses
+                        else
+                            echo -e "${RED}请输入有效的数字${NC}"
+                        fi
                     fi
-                fi
-                ;;
-            2)
-                INTERFACE=$(get_main_interface)
-                delete_all_ipv6 $INTERFACE
-                ;;
-            3)
-                INTERFACE=$(get_main_interface)
-                show_current_ipv6 $INTERFACE
-                ;;
-            4)
-                INTERFACE=$(get_main_interface)
-                test_proxy_connectivity
-                ;;
-            0)
-                break
-                ;;
-            *)
-                echo -e "${RED}无效的选择${NC}"
-                ;;
-        esac
-        
-        echo -e "\n按回车键继续..."
-        read
-    done
-    ;;
+                    ;;
+                2)
+                    INTERFACE=$(get_main_interface)
+                    delete_all_ipv6 $INTERFACE
+                    ;;
+                3)
+                    INTERFACE=$(get_main_interface)
+                    show_current_ipv6 $INTERFACE
+                    ;;
+                4)
+                    INTERFACE=$(get_main_interface)
+                    test_proxy_connectivity
+                    ;;
+                0)
+                    break
+                    ;;
+                *)
+                    echo -e "${RED}无效的选择${NC}"
+                    ;;
+            esac
+            
+            echo -e "\n按回车键继续..."
+            read
+        done
+        ;;
+    # ... 其他选项 ...
+esac
 
 # IP策略配置模块
 set_ip_strategy() {
