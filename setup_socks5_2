@@ -454,7 +454,6 @@ EOF
 
 
 # IP策略设置函数
-# IP策略设置函数
 set_ip_strategy() {
     echo "配置IP进出策略..."
 
@@ -481,7 +480,7 @@ set_ip_strategy() {
 
         case $strategy in
             4)
-                # 获取IPv6地址列表（修改后的更准确的获取方式）
+                # 获取IPv6地址列表
                 ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep "scope global" | grep -v "temporary" | awk '{print $2}' | cut -d'/' -f1))
                 ipv6_count=${#ipv6_addrs[@]}
                 echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
@@ -515,18 +514,21 @@ set_ip_strategy() {
                 fi
 
                 configure_ip_strategy $strategy port_ipv6_map
-                break
                 ;;
             1|2|3)
                 configure_ip_strategy $strategy
-                break
                 ;;
             *)
                 echo -e "${RED}无效的策略选择，请重新输入${NC}"
                 continue
                 ;;
         esac
+
+        # 生成代理列表
+        generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
+        break
     done
+}
 
     # 生成代理列表
     generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
