@@ -561,25 +561,12 @@ set_ip_strategy() {
                 return 1
             fi
 
-            while true; do
-                read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
-                if ! [[ "$port_count" =~ ^[0-9]+$ ]]; then
-                    echo -e "${RED}请输入有效的数字${NC}"
-                    continue
-                fi
-
-                if [ "$port_count" -gt "$ipv6_count" ]; then
-                    echo -e "${RED}错误: 端口数量($port_count)不能超过可用的IPv6地址数量($ipv6_count)${NC}"
-                    continue
-                fi
-
-                if [ "$port_count" -lt 1 ]; then
-                    echo -e "${RED}错误: 端口数量必须大于0${NC}"
-                    continue
-                fi
-
-                break
-            done
+            # 获取要配置的端口数量
+            read -p "请输入要配置的端口数量: " port_count
+            if [[ ! "$port_count" =~ ^[0-9]+$ ]]; then
+                echo -e "${RED}请输入有效的数字${NC}"
+                return 1
+            fi
 
             declare -A port_ipv6_map
 
