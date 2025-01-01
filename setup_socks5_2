@@ -231,51 +231,6 @@ add_ipv6_addresses() {
     fi
 }
 
-add_ipv6_addresses() {
-    local interface=$1
-    local prefix=$2
-    local num=$3
-    
-    echo -e "${YELLOW}准备添加IPv6地址:${NC}"
-    echo "使用网络接口: $interface"
-    echo "使用IPv6前缀: $prefix"
-    echo "计划添加数量: $num"
-    
-    # 显示当前地址
-    echo -e "\n${YELLOW}当前IPv6地址:${NC}"
-    ip -6 addr show dev $interface
-    
-    count=0
-    while [ $count -lt $num ]; do
-        # 生成后四组十六进制数
-        suffix=$(printf "%04x:%04x:%04x:%04x" \
-            $((RANDOM % 65536)) \
-            $((RANDOM % 65536)) \
-            $((RANDOM % 65536)) \
-            $((RANDOM % 65536)))
-        
-        # 构建完整的IPv6地址
-        NEW_IPV6="${prefix%::}:${suffix}"
-        
-        echo -e "\n${YELLOW}尝试添加新地址: $NEW_IPV6${NC}"
-        if ip -6 addr add "$NEW_IPV6/64" dev "$interface" 2>/dev/null; then
-            echo -e "${GREEN}成功添加IPv6地址: $NEW_IPV6${NC}"
-            ((count++))
-            
-            # 创建持久化配置
-            mkdir -p /etc/network/interfaces.d
-            echo "iface $interface inet6 static" >> /etc/network/interfaces.d/60-ipv6-addresses
-            echo "    address $NEW_IPV6/64" >> /etc/network/interfaces.d/60-ipv6-addresses
-            echo "" >> /etc/network/interfaces.d/60-ipv6-addresses
-        else
-            echo -e "${RED}添加地址失败: $NEW_IPV6${NC}"
-        fi
-    done
-    
-    # 显示最终结果
-    echo -e "\n${YELLOW}更新后的IPv6地址:${NC}"
-    ip -6 addr show dev $interface
-}
         
         # 构建完整的IPv6地址
         prefix_base=$(echo "$prefix" | sed 's/::$//')
