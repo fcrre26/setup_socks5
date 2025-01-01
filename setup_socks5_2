@@ -132,6 +132,9 @@ RestartSec=15s
 WantedBy=multi-user.target
 EOF
 
+    # 创建配置目录
+    mkdir -p /etc/xray
+    
     echo "启动Xray服务..."
     $service_manager daemon-reload
     $service_manager enable xray
