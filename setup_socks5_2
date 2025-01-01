@@ -845,6 +845,7 @@ EOF
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
     return 0
 }
+
 # 代理管理模块
 generate_proxy_list() {
     local strategy=$1
@@ -875,9 +876,8 @@ generate_proxy_list() {
             ;;
         
         4)  # IPv4进不同端口对应固定IPv6出
-            local port_index=0
-            for port in "${!port_map[@]}"; do
-                ipv6=${port_map[$port]}
+            for port in "${!port_ipv6_map[@]}"; do
+                ipv6=${port_ipv6_map[$port]}
                 for ipv4 in "${ipv4_addrs[@]}"; do
                     echo "$ipv4:$port:$socks_user:$socks_pass # 固定出口: $ipv6" >> /root/proxy_list.txt
                 done
