@@ -150,32 +150,89 @@ get_main_interface() {
 get_ipv6_prefix() {
     local interface=$1
     
-    # 显示当前所有IPv6地址信息
-    echo -e "${YELLOW}当前系统的IPv6地址信息：${NC}"
-    ip -6 addr show
-    echo "----------------------------------------"
-    
-    # 获取指定接口的非本地IPv6地址
-    local current_ipv6=$(ip -6 addr show dev $interface | grep -v fe80 | grep -v fd00 | grep inet6 | head -n1)
+    # 获取非本地IPv6地址
+    local current_ipv6=$(ip -6 addr show dev $interface | grep "scope global" | grep -v "temporary" | head -n1 | awk '{print $2}')
     
     if [ -z "$current_ipv6" ]; then
-        echo -e "${RED}错误: 未检测到IPv6地址${NC}"
-        echo "接口 $interface 没有找到可用的IPv6地址"
+        echo -e "${RED}错误: 未检测到IPv6地址${NC}" >&2
         return 1
     fi
     
-    echo -e "${GREEN}选择的IPv6地址: $current_ipv6${NC}"
+    # 从CIDR格式中提取地址部分
+    local ipv6_addr=$(echo "$current_ipv6" | cut -d'/' -f1)
     
-    # 提取前缀部分
-    IPV6_PREFIX=$(echo "$current_ipv6" | awk '{print $2}' | cut -d'/' -f1 | sed -E 's/:[^:]+:[^:]+:[^:]+:[^:]+$/::/')
+    # 提取前缀（前64位）
+    local prefix=$(echo "$ipv6_addr" | sed -E 's/:[^:]+:[^:]+:[^:]+:[^:]+$/::/')
     
-    if [ -z "$IPV6_PREFIX" ]; then
-        echo -e "${RED}错误: 无法提取IPv6前缀${NC}"
+    if [ -z "$prefix" ]; then
+        echo -e "${RED}错误: 无法提取IPv6前缀${NC}" >&2
         return 1
     fi
     
-    echo -e "${GREEN}提取的IPv6前缀: $IPV6_PREFIX${NC}"
-    echo "$IPV6_PREFIX"
+    echo "$prefix"
+}
+
+add_ipv6_addresses() {
+    local interface=$1
+    local prefix=$2
+    local num=$3
+    
+    echo -e "${YELLOW}准备添加IPv6地址:${NC}"
+    echo "使用网络接口: $interface"
+    echo "使用IPv6前缀: $prefix"
+    echo "计划添加数量: $num"
+    
+    # 显示当前地址
+    echo -e "\n${YELLOW}当前IPv6地址:${NC}"
+    ip -6 addr show dev $interface
+    
+    count=0
+    while [ $count -lt $num ]; do
+        # 生成后四组十六进制数
+        suffix=$(printf "%04x:%04x:%04x:%04x" \
+            $((RANDOM % 65536)) \
+            $((RANDOM % 65536)) \
+            $((RANDOM % 65536)) \
+            $((RANDOM % 65536)))
+        
+        # 构建完整的IPv6地址（去掉前缀末尾的双冒号）
+        prefix_base=$(echo "$prefix" | sed 's/::$//')
+        NEW_IPV6="${prefix_base}:${suffix}"
+        
+        echo -e "\n${YELLOW}尝试添加新地址: $NEW_IPV6${NC}"
+        if ip -6 addr add "$NEW_IPV6/64" dev "$interface" 2>/dev/null; then
+            echo -e "${GREEN}成功添加IPv6地址: $NEW_IPV6${NC}"
+            ((count++))
+            
+            # 创建持久化配置目录（如果不存在）
+            if [ ! -d "/etc/network/interfaces.d" ]; then
+                mkdir -p /etc/network/interfaces.d
+            fi
+            
+            # 添加到持久化配置
+            echo "iface $interface inet6 static" >> /etc/network/interfaces.d/60-ipv6-addresses
+            echo "    address $NEW_IPV6/64" >> /etc/network/interfaces.d/60-ipv6-addresses
+            echo "" >> /etc/network/interfaces.d/60-ipv6-addresses
+        else
+            echo -e "${RED}添加地址失败: $NEW_IPV6${NC}"
+        fi
+    done
+    
+    # 显示最终结果
+    echo -e "\n${YELLOW}更新后的IPv6地址:${NC}"
+    ip -6 addr show dev $interface
+    
+    # 确保配置文件存在
+    if [ ! -f "/etc/network/interfaces" ]; then
+        echo "auto lo" > /etc/network/interfaces
+        echo "iface lo inet loopback" >> /etc/network/interfaces
+        echo "" >> /etc/network/interfaces
+    fi
+    
+    # 添加 source 指令（如果不存在）
+    if ! grep -q "source /etc/network/interfaces.d/\*" /etc/network/interfaces; then
+        echo "source /etc/network/interfaces.d/*" >> /etc/network/interfaces
+    fi
 }
 
 add_ipv6_addresses() {
