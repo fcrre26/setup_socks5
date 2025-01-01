@@ -170,6 +170,9 @@ add_ipv6_addresses() {
     local prefix=$2
     local num=$3
     
+    # 清理前缀格式，确保只有一个结尾冒号
+    prefix_cleaned=$(echo "$prefix" | sed 's/::*$/::/')
+    
     mkdir -p /etc/network/interfaces.d/
     CONFIG_FILE="/etc/network/interfaces.d/60-ipv6-addresses"
     
@@ -180,29 +183,23 @@ add_ipv6_addresses() {
     declare -A GENERATED_ADDRESSES
     count=0
     while [ $count -lt $num ]; do
-        # 生成4个16位数字作为接口标识符
-        local suffix=""
+        # 生成16位随机后缀（4个十六进制数）
+        suffix=""
         for i in {1..4}; do
-            local rand_hex=$(printf "%04x" $((RANDOM % 65536)))
-            suffix="${suffix}${rand_hex}"
-            if [ $i -lt 4 ]; then
-                suffix="${suffix}:"
-            fi
+            hex_num=$(printf "%04x" $((RANDOM % 65536)))
+            suffix="${suffix}${hex_num}"
         done
         
-        # 确保前缀格式正确（去除多余的冒号）
-        prefix_cleaned=$(echo "$prefix" | sed 's/::*$//')
-        NEW_IPV6="${prefix_cleaned}:${suffix}"
+        NEW_IPV6="${prefix_cleaned}${suffix}"
         
         if [ -z "${GENERATED_ADDRESSES[$NEW_IPV6]}" ]; then
             GENERATED_ADDRESSES[$NEW_IPV6]=1
             
-            if ip -6 addr add $NEW_IPV6/64 dev $interface 2>/dev/null; then
+            if ip -6 addr add "$NEW_IPV6/64" dev "$interface" 2>/dev/null; then
                 echo -e "${GREEN}已添加IPv6地址: $NEW_IPV6${NC}"
                 echo "" >> $CONFIG_FILE
                 echo "iface $interface inet6 static" >> $CONFIG_FILE
-                echo "    address $NEW_IPV6" >> $CONFIG_FILE
-                echo "    netmask 64" >> $CONFIG_FILE
+                echo "    address $NEW_IPV6/64" >> $CONFIG_FILE
                 ((count++))
             else
                 echo -e "${RED}添加地址失败: $NEW_IPV6${NC}"
