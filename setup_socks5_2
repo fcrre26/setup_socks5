@@ -1100,7 +1100,6 @@ show_usage() {
 }
 
 # 主程序
-# 主程序
 main() {
     # 检查root权限
     if [ "$EUID" -ne 0 ]; then 
