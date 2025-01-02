@@ -476,55 +476,41 @@ EOF
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
     ;;
     
-        4)  # IPv4进，不同端口对应固定IPv6出
-    # 为每个端口配置入站和对应的IPv6出站
-    for port in "${!port_map[@]}"; do
-        ipv6=${port_map[$port]}
-        for ipv4 in "${ipv4_addrs[@]}"; do
-            cat <<EOF >> /etc/xray/serve.json
+4)  # IPv4进，不同端口对应固定IPv6出
+            # 为每个端口配置入站和对应的IPv6出站
+            for port in "${!port_map[@]}"; do
+                ipv6=${port_map[$port]}
+                for ipv4 in "${ipv4_addrs[@]}"; do
+                    cat <<EOF >> /etc/xray/serve.json
 {
-    "inbounds": [
-        {
-            "listen": "$ipv4",
-            "port": $port,
-            "protocol": "socks",
-            "tag": "in_${port}_${ipv4}",
-            "settings": {
-                "auth": "password",
-                "udp": true,
-                "ip": "$ipv4",
-                "accounts": [
-                    {
-                        "user": "$socks_user",
-                        "pass": "$socks_pass"
-                    }
-                ]
-            }
+    "inbounds": [{
+        "listen": "$ipv4",
+        "port": $port,
+        "protocol": "socks",
+        "tag": "in_${port}_${ipv4}",
+        "settings": {
+            "auth": "password",
+            "udp": true,
+            "ip": "$ipv4",
+            "accounts": [{
+                "user": "$socks_user",
+                "pass": "$socks_pass"
+            }]
         }
-    ],
-    "outbounds": [
-        {
-            "protocol": "freedom",
-            "tag": "out_${port}",
-            "settings": {
-                "domainStrategy": "UseIPv6"
-            },
-            "streamSettings": {
-                "sockopt": {
-                    "mark": 255
-                }
-            },
-            "sendThrough": "$ipv6"
-        }
-    ],
+    }],
+    "outbounds": [{
+        "protocol": "freedom",
+        "tag": "out_${port}",
+        "settings": { "domainStrategy": "UseIPv6" },
+        "streamSettings": { "sockopt": { "mark": 255 } },
+        "sendThrough": "$ipv6"
+    }],
     "routing": {
-        "rules": [
-            {
-                "type": "field",
-                "inboundTag": ["in_${port}_${ipv4}"],
-                "outboundTag": "out_${port}"
-            }
-        ]
+        "rules": [{
+            "type": "field",
+            "inboundTag": ["in_${port}_${ipv4}"],
+            "outboundTag": "out_${port}"
+        }]
     }
 }
 EOF
