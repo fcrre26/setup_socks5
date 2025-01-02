@@ -294,6 +294,9 @@ set_ip_strategy() {
         read -p "请输入密码: " socks_pass
     fi
 
+    # 创建追踪目录
+    mkdir -p /etc/xray/track
+
     # 获取IPv4和IPv6地址列表 
     ipv4_addrs=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
     ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
@@ -308,7 +311,7 @@ set_ip_strategy() {
     echo "4. IPv4进，不同端口对应固定IPv6出（自动分配）"
     read -p "请输入选项 [1-4]: " strategy
 
-    # 创建配置目录
+    # 创建配置目录和清空配置文件
     mkdir -p /etc/xray
     echo -n "" > /etc/xray/serve.toml
 
@@ -320,7 +323,7 @@ set_ip_strategy() {
 [[inbounds]]
 port = $socks_port
 protocol = "socks"
-tag = "in_tag_$i"
+tag = "in_tag_$((i + 1))"
 listen = "$current_ip"
 [inbounds.settings]
 auth = "password"
@@ -331,28 +334,29 @@ pass = "$socks_pass"
 
 [[outbounds]]
 protocol = "freedom"
-tag = "out_tag_$i"
+tag = "out_tag_$((i + 1))"
 [outbounds.settings]
 domainStrategy = "UseIPv4"
 sendThrough = "$current_ip"
 
 [[routing.rules]]
 type = "field"
-inboundTag = ["in_tag_$i"]
-outboundTag = "out_tag_$i"
+inboundTag = ["in_tag_$((i + 1))"]
+outboundTag = "out_tag_$((i + 1))"
 
 EOF
             done
             ;;
 
         2)  # IPv4进随机IPv4出
+            # 创建入站配置
             for ((i = 0; i < ${#ipv4_addrs[@]}; i++)); do
                 local current_ip=${ipv4_addrs[i]}
                 cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 port = $socks_port
 protocol = "socks"
-tag = "in_tag_$i"
+tag = "in_tag_$((i + 1))"
 listen = "$current_ip"
 [inbounds.settings]
 auth = "password"
@@ -364,13 +368,51 @@ pass = "$socks_pass"
 EOF
             done
 
-            # 添加共用出站
+            # 创建IPv4选择脚本
+            cat <<'EOF' > /etc/xray/track/select_next_ipv4.sh
+#!/bin/bash
+TRACK_DIR="/etc/xray/track"
+IPV4_USED="$TRACK_DIR/ipv4_used.txt"
+
+# 获取所有IPv4地址
+all_ipv4=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
+
+# 如果used文件不存在，创建它
+if [ ! -s "$IPV4_USED" ]; then
+    touch "$IPV4_USED"
+fi
+
+# 读取已使用的IP
+used_ips=($(cat "$IPV4_USED"))
+
+# 如果所有IP都已使用，清空记录重新开始
+if [ ${#used_ips[@]} -ge ${#all_ipv4[@]} ]; then
+    echo -n "" > "$IPV4_USED"
+    used_ips=()
+fi
+
+# 查找未使用的IP
+for ip in "${all_ipv4[@]}"; do
+    if [[ ! " ${used_ips[*]} " =~ " ${ip} " ]]; then
+        echo "$ip" >> "$IPV4_USED"
+        echo "$ip"
+        exit 0
+    fi
+done
+
+# 如果没有找到未使用的IP，使用第一个IP
+echo "${all_ipv4[0]}"
+EOF
+            chmod +x /etc/xray/track/select_next_ipv4.sh
+
+            # 添加出站配置
             cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
 tag = "random_ipv4_out"
 [outbounds.settings]
 domainStrategy = "UseIPv4"
+sendThrough = "$(./etc/xray/track/select_next_ipv4.sh)"
 
 [[routing.rules]]
 type = "field"
@@ -380,13 +422,14 @@ EOF
             ;;
 
         3)  # IPv4进随机IPv6出
+            # 创建入站配置
             for ((i = 0; i < ${#ipv4_addrs[@]}; i++)); do
                 local current_ip=${ipv4_addrs[i]}
                 cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 port = $socks_port
 protocol = "socks"
-tag = "in_tag_$i"
+tag = "in_tag_$((i + 1))"
 listen = "$current_ip"
 [inbounds.settings]
 auth = "password"
@@ -398,13 +441,51 @@ pass = "$socks_pass"
 EOF
             done
 
-            # 添加共用IPv6出站
+            # 创建IPv6选择脚本
+            cat <<'EOF' > /etc/xray/track/select_next_ipv6.sh
+#!/bin/bash
+TRACK_DIR="/etc/xray/track"
+IPV6_USED="$TRACK_DIR/ipv6_used.txt"
+
+# 获取所有IPv6地址
+all_ipv6=($(ip -6 addr show | grep -oP '(?<=inet6\s)[\da-f:]+' | grep -v '^fe80' | grep -v '^::1'))
+
+# 如果used文件不存在，创建它
+if [ ! -s "$IPV6_USED" ]; then
+    touch "$IPV6_USED"
+fi
+
+# 读取已使用的IP
+used_ips=($(cat "$IPV6_USED"))
+
+# 如果所有IP都已使用，清空记录重新开始
+if [ ${#used_ips[@]} -ge ${#all_ipv6[@]} ]; then
+    echo -n "" > "$IPV6_USED"
+    used_ips=()
+fi
+
+# 查找未使用的IP
+for ip in "${all_ipv6[@]}"; do
+    if [[ ! " ${used_ips[*]} " =~ " ${ip} " ]]; then
+        echo "$ip" >> "$IPV6_USED"
+        echo "$ip"
+        exit 0
+    fi
+done
+
+# 如果没有找到未使用的IP，使用第一个IP
+echo "${all_ipv6[0]}"
+EOF
+            chmod +x /etc/xray/track/select_next_ipv6.sh
+
+            # 添加出站配置
             cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
 tag = "random_ipv6_out"
 [outbounds.settings]
 domainStrategy = "UseIPv6"
+sendThrough = "$(./etc/xray/track/select_next_ipv6.sh)"
 
 [[routing.rules]]
 type = "field"
@@ -413,58 +494,43 @@ outboundTag = "random_ipv6_out"
 EOF
             ;;
 
-4)  # IPv4进，不同端口对应固定IPv6出
-    # 获取可用的IPv6地址数量
-    local ipv6_count=${#ipv6_addrs[@]}
-    echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
+        4)  # IPv4进不同端口对应固定IPv6出
+            local ipv6_count=${#ipv6_addrs[@]}
+            echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
 
-    # 获取要配置的端口数量
-    while true; do
-        read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
-        if ! [[ "$port_count" =~ ^[0-9]+$ ]]; then
-            echo -e "${RED}请输入有效的数字${NC}"
-            continue
-        fi
+            # 获取要配置的端口数量
+            while true; do
+                read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
+                if ! [[ "$port_count" =~ ^[0-9]+$ ]] || [ "$port_count" -lt 1 ] || [ "$port_count" -gt "$ipv6_count" ]; then
+                    echo -e "${RED}请输入1到$ipv6_count之间的数字${NC}"
+                    continue
+                fi
+                break
+            done
 
-        if [ "$port_count" -gt "$ipv6_count" ]; then
-            echo -e "${RED}错误: 端口数量($port_count)不能超过可用的IPv6地址数量($ipv6_count)${NC}"
-            continue
-        fi
+            # 显示端口和IPv6的对应关系
+            echo -e "\n${YELLOW}端口与IPv6地址的对应关系：${NC}"
+            for ((i=0; i<port_count; i++)); do
+                current_port=$((socks_port + i))
+                current_ipv6=${ipv6_addrs[$i]}
+                echo -e "${GREEN}端口 $current_port -> IPv6: $current_ipv6${NC}"
+            done
 
-        if [ "$port_count" -lt 1 ]; then
-            echo -e "${RED}错误: 端口数量必须大于0${NC}"
-            continue
-        fi
-        break
-    done
+            read -p "确认使用以上配置？[y/N] " confirm
+            if [[ ! $confirm =~ ^[Yy]$ ]]; then
+                echo -e "${YELLOW}已取消配置${NC}"
+                return 1
+            fi
 
-    # 创建端口到IPv6的映射
-    declare -A port_ipv6_map
-    echo -e "\n${YELLOW}端口与IPv6地址的对应关系：${NC}"
-    
-    for ((i=0; i<port_count; i++)); do
-        current_port=$((socks_port + i))
-        current_ipv6=${ipv6_addrs[$i]}
-        port_ipv6_map[$current_port]=$current_ipv6
-        echo -e "${GREEN}端口 $current_port -> IPv6: $current_ipv6${NC}"
-    done
-
-    # 确认配置
-    read -p "确认使用以上配置？[y/N] " confirm
-    if [[ ! $confirm =~ ^[Yy]$ ]]; then
-        echo -e "${YELLOW}已取消配置${NC}"
-        return 1
-    fi
-
-    # 生成配置文件
-    for ((i=0; i<port_count; i++)); do
-        current_port=$((socks_port + i))
-        current_ipv6=${port_ipv6_map[$current_port]}
-        
-        # 为每个IPv4配置入站
-        for ((j=0; j < ${#ipv4_addrs[@]}; j++)); do
-            local current_ipv4=${ipv4_addrs[j]}
-            cat <<EOF >> /etc/xray/serve.toml
+            # 生成配置
+            for ((i=0; i<port_count; i++)); do
+                current_port=$((socks_port + i))
+                current_ipv6=${ipv6_addrs[$i]}
+                
+                # 为每个IPv4配置入站
+                for ((j=0; j<${#ipv4_addrs[@]}; j++)); do
+                    local current_ipv4=${ipv4_addrs[j]}
+                    cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 port = $current_port
 protocol = "socks"
@@ -478,10 +544,10 @@ user = "$socks_user"
 pass = "$socks_pass"
 
 EOF
-        done
+                done
 
-        # 为每个端口配置对应的IPv6出站
-        cat <<EOF >> /etc/xray/serve.toml
+                # 配置出站和路由规则
+                cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
 tag = "out_${current_port}"
@@ -495,8 +561,8 @@ inboundTag = ["in_${current_port}_0"$(for ((j=1; j<${#ipv4_addrs[@]}; j++)); do 
 outboundTag = "out_${current_port}"
 
 EOF
-    done
-    ;;
+            done
+            ;;
     esac
 
     # 检查配置文件
@@ -521,6 +587,7 @@ EOF
     generate_proxy_list $strategy $port_count
     return 0
 }
+
 
 # 代理设置模块
 set_socks5_credentials() {
