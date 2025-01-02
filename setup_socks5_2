@@ -88,13 +88,39 @@ check_ipv6() {
 
 # Xray安装模块
 install_xray() {
-    echo "正在从GitHub下载Xray..."
-    check_and_install_unzip
-    wget --no-check-certificate -O /tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
-    unzip /tmp/xray.zip -d /usr/local/bin
-    rm -f /tmp/xray.zip
-    chmod +x /usr/local/bin/xray
-    echo "Xray已下载并设置为可执行。"
+    echo "安装 Xray..."
+    apt-get install unzip -y || yum install unzip -y
+    wget https://github.com/XTLS/Xray-core/releases/download/v1.8.3/Xray-linux-64.zip
+    unzip Xray-linux-64.zip
+    mv xray /usr/local/bin/xrayL
+    chmod +x /usr/local/bin/xrayL
+
+    # 创建服务文件
+    cat <<EOF >/etc/systemd/system/xrayL.service
+[Unit]
+Description=XrayL Service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/xrayL -c /etc/xrayL/config.toml
+Restart=on-failure
+User=nobody
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable xrayL.service
+    
+    # 验证安装
+    if ! [ -x "$(command -v xrayL)" ]; then
+        echo "XrayL 安装失败"
+        return 1
+    fi
+    
+    echo "XrayL 安装完成."
     return 0
 }
 
