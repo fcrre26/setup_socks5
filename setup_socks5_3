@@ -118,7 +118,7 @@ Description=The Xray Proxy Server
 After=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/xray -c /etc/xray/serve.toml
+ExecStart=/usr/local/bin/xray -c /etc/xray/serve.json
 ExecStop=/bin/kill -s QUIT \$MAINPID
 Restart=always
 RestartSec=15s
@@ -293,12 +293,12 @@ configure_ip_strategy() {
     fi
     
     mkdir -p /etc/xray
-    echo -n "" > /etc/xray/serve.toml
+    echo -n "" > /etc/xray/serve.json
 
     case $strategy in
         1)  # 同IP进同IP出
             for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
 [[inbounds]]
 listen = "$ipv4"
 port = $socks_port
@@ -331,7 +331,7 @@ EOF
         2)  # IPv4进随机IPv4出
             # 首先写入所有入站配置
             for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
 [[inbounds]]
 listen = "$ipv4"
 port = $socks_port
@@ -350,7 +350,7 @@ EOF
 
             # 然后写入所有出站配置
             for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
 [[outbounds]]
 protocol = "freedom"
 tag = "out_$ipv4"
@@ -362,7 +362,7 @@ EOF
             done
 
             # 添加负载均衡器配置
-            cat <<EOF >> /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.json
 [[balancers]]
 tag = "ipv4_balancer"
 selector = [$(printf '"out_%s", ' "${ipv4_addrs[@]}" | sed 's/, $//')]
@@ -372,7 +372,7 @@ EOF
 
             # 为每个入站添加到负载均衡器的路由规则
             for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
 [[routing.rules]]
 type = "field"
 inboundTag = ["in_$ipv4"]
@@ -382,59 +382,82 @@ EOF
             done
             ;;
     3)  # IPv4进随机IPv6出（不重复直到耗尽）
-    # 写入单个入站配置（固定IPv4和端口）
-    cat <<EOF >> /etc/xray/serve.toml
-[[inbounds]]
-listen = "${ipv4_addrs[0]}"
-port = $socks_port
-protocol = "socks"
-tag = "inbound-ipv4"
-[inbounds.settings]
-auth = "password"
-udp = true
-[[inbounds.settings.accounts]]
-user = "$socks_user"
-pass = "$socks_pass"
-
+    cat <<EOF > /etc/xray/serve.json
+{
+    "inbounds": [
+        {
+            "listen": "${ipv4_addrs[0]}",
+            "port": $socks_port,
+            "protocol": "socks",
+            "tag": "inbound-ipv4",
+            "settings": {
+                "auth": "password",
+                "udp": true,
+                "accounts": [
+                    {
+                        "user": "$socks_user",
+                        "pass": "$socks_pass"
+                    }
+                ]
+            }
+        }
+    ],
+    "outbounds": [
 EOF
 
     # 随机打乱 IPv6 地址数组
     ipv6_shuffled=($(printf "%s\n" "${ipv6_addrs[@]}" | shuf))
     
     # 写入所有IPv6出站配置（已打乱顺序）
+    first=true
     outbound_tags=()
     for ipv6 in "${ipv6_shuffled[@]}"; do
         safe_tag="outbound_$(echo $ipv6 | tr ':.' '_')"
         outbound_tags+=("$safe_tag")
         
-        cat <<EOF >> /etc/xray/serve.toml
-[[outbounds]]
-protocol = "freedom"
-tag = "$safe_tag"
-settings = { domainStrategy = "UseIPv6" }
-streamSettings = { sockopt = { mark = 255 } }
-sendThrough = "$ipv6"
-
+        if [ "$first" = true ]; then
+            first=false
+        else
+            echo "        ," >> /etc/xray/serve.json
+        fi
+        
+        cat <<EOF >> /etc/xray/serve.json
+        {
+            "protocol": "freedom",
+            "tag": "$safe_tag",
+            "settings": {
+                "domainStrategy": "UseIPv6"
+            },
+            "streamSettings": {
+                "sockopt": {
+                    "mark": 255
+                }
+            },
+            "sendThrough": "$ipv6"
+        }
 EOF
     done
 
-    # 写入负载均衡器配置
-    selector_string=$(IFS=,; echo "${outbound_tags[*]}" | sed 's/^/"/;s/,/","/g;s/$/"/;s/ //g')
-    cat <<EOF >> /etc/xray/serve.toml
-[[balancers]]
-tag = "ipv6_balancer"
-selector = [$selector_string]
-strategy = "round-robin"
-
-EOF
-
-    # 写入路由规则
-    cat <<EOF >> /etc/xray/serve.toml
-[[routing.rules]]
-type = "field"
-inboundTag = ["inbound-ipv4"]
-balancerTag = "ipv6_balancer"
-
+    # 写入路由和负载均衡配置
+    cat <<EOF >> /etc/xray/serve.json
+    ],
+    "routing": {
+        "rules": [
+            {
+                "type": "field",
+                "inboundTag": ["inbound-ipv4"],
+                "balancerTag": "ipv6_balancer"
+            }
+        ],
+        "balancers": [
+            {
+                "tag": "ipv6_balancer",
+                "selector": [$(printf '"%s",' "${outbound_tags[@]}" | sed 's/,$//')],
+                "strategy": "round-robin"
+            }
+        ]
+    }
+}
 EOF
     ;;
     
@@ -443,7 +466,7 @@ EOF
             for port in "${!port_map[@]}"; do
                 ipv6=${port_map[$port]}
                 for ipv4 in "${ipv4_addrs[@]}"; do
-                    cat <<EOF >> /etc/xray/serve.toml
+                    cat <<EOF >> /etc/xray/serve.json
 [[inbounds]]
 listen = "$ipv4"
 port = $port
@@ -476,7 +499,7 @@ EOF
     esac
 
     # 检查配置文件
-    if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve.json; then
         echo -e "${RED}Xray 配置验证失败${NC}"
         return 1
     fi
@@ -710,7 +733,7 @@ clear_proxy_rules() {
     echo "清除所有代理规则..."
     $service_manager stop xray
     $service_manager disable xray
-    rm -f /etc/xray/serve.toml
+    rm -f /etc/xray/serve.json
     rm -f /etc/systemd/system/xray.service
     iptables -F
     iptables -X
