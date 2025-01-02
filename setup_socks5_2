@@ -283,8 +283,8 @@ show_current_ipv6() {
     echo "$ipv6_list"
 }
 
-#!/bin/bash:c:/Users/Administrator/Desktop/参考脚本修改后.sh:set_ip_strategy
 # IP策略配置模块
+#!/bin/bash:文件路径请根据实际情况填写:set_ip_strategy
 set_ip_strategy() {
     echo "配置IP进出策略..."
 
@@ -304,12 +304,7 @@ set_ip_strategy() {
 
     # 如果没有之前设置的信息，先获取
     if [ -z "$socks_port" ] || [ -z "$socks_user" ] || [ -z "$socks_pass" ]; then
-        read -p "请输入SOCKS5起始端口 [默认: $DEFAULT_START_PORT]: " socks_port_input
-        socks_port=${socks_port_input:-$DEFAULT_START_PORT}
-        read -p "请输入用户名 [默认: $DEFAULT_SOCKS_USERNAME]: " socks_user_input
-        socks_user=${socks_user_input:-$DEFAULT_SOCKS_USERNAME}
-        read -p "请输入密码 [默认: $DEFAULT_SOCKS_PASSWORD]: " socks_pass_input
-        socks_pass=${socks_pass_input:-$DEFAULT_SOCKS_PASSWORD}
+        set_socks5_credentials
     fi
 
     # 创建追踪目录
@@ -460,7 +455,7 @@ pass = "$socks_pass"
 EOF
             done
 
-            # 定义出站标签为 balancer
+            # 定义出站标签为 balancer_out6
             cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 type = "balancer"
@@ -578,6 +573,7 @@ EOF
     fi
 
     # 重启 Xray 服务
+    systemctl daemon-reload
     systemctl restart xray.service
     sleep 2
 
