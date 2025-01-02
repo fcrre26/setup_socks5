@@ -284,7 +284,6 @@ show_current_ipv6() {
 }
 
 # IP策略配置模块
-# IP策略配置模块
 configure_ip_strategy() {
     local strategy=$1
     local -n port_map # 修改声明方式
@@ -364,7 +363,7 @@ EOF
             cat <<EOF >> /etc/xray/serve.toml
 [[balancers]]
 tag = "ipv4_balancer"
-selector = ["out_${ipv4_addrs[*]// /", "out_}"]
+selector = [$(printf '"out_%s", ' "${ipv4_addrs[@]}" | sed 's/, $//')]
 strategy = "round-robin"
 
 [[routing.rules]]
@@ -411,7 +410,7 @@ EOF
             cat <<EOF >> /etc/xray/serve.toml
 [[balancers]]
 tag = "ipv6_balancer"
-selector = ["out_${ipv6_addrs[*]// /", "out_}"]
+selector = [$(printf '"out_%s", ' "${ipv6_addrs[@]}" | sed 's/, $//')]
 strategy = "round-robin"
 
 [[routing.rules]]
