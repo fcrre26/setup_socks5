@@ -493,49 +493,47 @@ network = ["tcp", "udp"]
 outboundTag = "random_ipv6_out"
 EOF
             ;;
+4)  # IPv4进不同端口对应固定IPv6出
+    local ipv6_count=${#ipv6_addrs[@]}
+    echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
 
-        4)  # IPv4进不同端口对应固定IPv6出
-            local ipv6_count=${#ipv6_addrs[@]}
-            echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
+    # 获取要配置的端口数量
+    while true; do
+        read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
+        if ! [[ "$port_count" =~ ^[0-9]+$ ]] || [ "$port_count" -lt 1 ] || [ "$port_count" -gt "$ipv6_count" ]; then
+            echo -e "${RED}请输入1到$ipv6_count之间的数字${NC}"
+            continue
+        fi
+        break
+    done
 
-            # 获取要配置的端口数量
-            while true; do
-                read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
-                if ! [[ "$port_count" =~ ^[0-9]+$ ]] || [ "$port_count" -lt 1 ] || [ "$port_count" -gt "$ipv6_count" ]; then
-                    echo -e "${RED}请输入1到$ipv6_count之间的数字${NC}"
-                    continue
-                fi
-                break
-            done
+    # 显示配置预览
+    echo -e "\n${YELLOW}端口与IPv6的对应关系：${NC}"
+    for ((i=0; i<port_count; i++)); do
+        current_port=$((socks_port + i))
+        current_ipv6=${ipv6_addrs[$i]}
+        echo -e "${GREEN}端口 $current_port -> IPv6: $current_ipv6${NC}"
+    done
 
-            # 显示端口和IPv6的对应关系
-            echo -e "\n${YELLOW}端口与IPv6地址的对应关系：${NC}"
-            for ((i=0; i<port_count; i++)); do
-                current_port=$((socks_port + i))
-                current_ipv6=${ipv6_addrs[$i]}
-                echo -e "${GREEN}端口 $current_port -> IPv6: $current_ipv6${NC}"
-            done
+    read -p "确认使用以上配置？[y/N] " confirm
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}已取消配置${NC}"
+        return 1
+    fi
 
-            read -p "确认使用以上配置？[y/N] " confirm
-            if [[ ! $confirm =~ ^[Yy]$ ]]; then
-                echo -e "${YELLOW}已取消配置${NC}"
-                return 1
-            fi
-
-            # 生成配置
-            for ((i=0; i<port_count; i++)); do
-                current_port=$((socks_port + i))
-                current_ipv6=${ipv6_addrs[$i]}
-                
-                # 为每个IPv4配置入站
-                for ((j=0; j<${#ipv4_addrs[@]}; j++)); do
-                    local current_ipv4=${ipv4_addrs[j]}
-                    cat <<EOF >> /etc/xray/serve.toml
+    # 生成配置
+    for ((i=0; i<port_count; i++)); do
+        current_port=$((socks_port + i))
+        current_ipv6=${ipv6_addrs[$i]}
+        
+        # 为每个端口配置入站（所有IPv4地址都监听这个端口）
+        for ipv4 in "${ipv4_addrs[@]}"; do
+            cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 port = $current_port
 protocol = "socks"
-tag = "in_${current_port}_${j}"
-listen = "$current_ipv4"
+tag = "in_${current_port}"
+listen = "$ipv4"
 [inbounds.settings]
 auth = "password"
 udp = true
@@ -544,10 +542,10 @@ user = "$socks_user"
 pass = "$socks_pass"
 
 EOF
-                done
+        done
 
-                # 配置出站和路由规则
-                cat <<EOF >> /etc/xray/serve.toml
+        # 为这个端口配置对应的IPv6出站
+        cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
 tag = "out_${current_port}"
@@ -557,12 +555,12 @@ sendThrough = "$current_ipv6"
 
 [[routing.rules]]
 type = "field"
-inboundTag = ["in_${current_port}_0"$(for ((j=1; j<${#ipv4_addrs[@]}; j++)); do echo -n ", \"in_${current_port}_${j}\""; done)]
+inboundTag = ["in_${current_port}"]
 outboundTag = "out_${current_port}"
 
 EOF
-            done
-            ;;
+    done
+
     esac
 
     # 检查配置文件
