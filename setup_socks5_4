@@ -475,9 +475,7 @@ EOF
 
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
     ;;
-    
-4)  # IPv4进，不同端口对应固定IPv6出
-    # 首先创建配置文件头部
+ 4)  # IPv4进，不同端口对应固定IPv6出
     cat <<EOF > /etc/xray/serve.json
 {
     "inbounds": [
@@ -491,7 +489,7 @@ EOF
             if [ "$first_inbound" = true ]; then
                 first_inbound=false
             else
-                echo "        ," >> /etc/xray/serve.json
+                echo "," >> /etc/xray/serve.json
             fi
             
             cat <<EOF >> /etc/xray/serve.json
@@ -527,7 +525,7 @@ EOF
         if [ "$first_outbound" = true ]; then
             first_outbound=false
         else
-            echo "        ," >> /etc/xray/serve.json
+            echo "," >> /etc/xray/serve.json
         fi
         
         cat <<EOF >> /etc/xray/serve.json
@@ -555,7 +553,7 @@ EOF
             if [ "$first_rule" = true ]; then
                 first_rule=false
             else
-                echo "            ," >> /etc/xray/serve.json
+                echo "," >> /etc/xray/serve.json
             fi
             
             cat <<EOF >> /etc/xray/serve.json
@@ -574,7 +572,7 @@ EOF
     }
 }
 EOF
-            ;;
+
     # 检查配置文件
     if ! /usr/local/bin/xray -test -config /etc/xray/serve.json; then
         echo -e "${RED}Xray 配置验证失败${NC}"
@@ -592,9 +590,9 @@ EOF
     fi
 
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
-    return 0
-}
+    ;;   
 
+#配置IP进出策略
 set_ip_strategy() {
     echo "配置IP进出策略..."
 
