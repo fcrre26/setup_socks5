@@ -442,7 +442,9 @@ cat <<EOF >> /etc/xray/serve.json
         "balancers": [{
             "tag": "ipv6_balancer",
             "selector": [$(printf '"%s",' "${outbound_tags[@]}" | sed 's/,$//')],
-            "strategy": "leastping"
+            "strategy": {
+                "type": "random"
+            }
         }],
         "rules": [{
             "type": "field",
