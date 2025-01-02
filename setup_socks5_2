@@ -643,6 +643,16 @@ generate_proxy_list() {
     return 0
 }
 
+# 代理设置模块
+set_socks5_credentials() {
+    read -p "请输入SOCKS5起始端口: " socks_port
+    read -p "请输入用户名: " socks_user
+    read -p "请输入密码: " socks_pass
+    set_ip_strategy
+    echo "SOCKS5端口、用户名和密码设置完成。"
+    return 0
+}
+
 # 工具函数
 get_active_interfaces() {
     interfaces=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2}')
