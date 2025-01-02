@@ -568,6 +568,72 @@ clear_proxy_rules() {
     return 0
 }
 
+# IPv6相关函数
+generate_random_hex() {
+    local length=$1
+    head -c $((length/2)) /dev/urandom | hexdump -ve '1/1 "%.2x"'
+}
+
+get_main_interface() {
+    MAIN_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
+    if [ -z "$MAIN_INTERFACE" ]; then
+        echo -e "${RED}错误: 无法检测到主网卡${NC}"
+        return 1
+    fi
+    echo $MAIN_INTERFACE
+}
+
+add_ipv6_addresses() {
+    local interface=$1
+    local prefix=$2
+    local count=$3
+    local added=0
+
+    echo "正在添加IPv6地址..."
+    for ((i=1; i<=count; i++)); do
+        # 生成随机的接口标识符
+        local suffix=$(generate_random_hex 32)
+        local ipv6_addr="${prefix}${suffix}"
+        
+        if ip -6 addr add ${ipv6_addr}/64 dev $interface 2>/dev/null; then
+            echo -e "${GREEN}成功添加IPv6地址: ${ipv6_addr}${NC}"
+            added=$((added + 1))
+        else
+            echo -e "${RED}添加IPv6地址失败: ${ipv6_addr}${NC}"
+        fi
+    done
+
+    echo "成功添加 $added 个IPv6地址"
+    return 0
+}
+
+delete_all_ipv6() {
+    local interface=$1
+    echo "删除所有IPv6地址..."
+    
+    # 保存原始IPv6地址
+    local original_ipv6=$(ip -6 addr show dev $interface scope global | grep inet6 | head -n1 | awk '{print $2}')
+    
+    # 删除所有IPv6地址
+    ip -6 addr flush dev $interface scope global
+    
+    # 如果有原始IPv6地址，则恢复它
+    if [ ! -z "$original_ipv6" ]; then
+        ip -6 addr add $original_ipv6 dev $interface
+        echo -e "${GREEN}已恢复原始IPv6地址: $original_ipv6${NC}"
+    fi
+    
+    echo "IPv6地址已清除"
+    return 0
+}
+
+show_current_ipv6() {
+    local interface=$1
+    echo -e "${YELLOW}当前IPv6地址列表：${NC}"
+    ip -6 addr show dev $interface scope global
+    return 0
+}
+
 # IPv6管理菜单
 ipv6_manager_menu() {
     while true; do
