@@ -284,7 +284,6 @@ show_current_ipv6() {
 }
 
 # IP策略配置模块
-#!/bin/bash:文件路径请根据实际情况填写:set_ip_strategy
 set_ip_strategy() {
     echo "配置IP进出策略..."
 
@@ -330,10 +329,9 @@ set_ip_strategy() {
             for ipv4 in "${ipv4_addrs[@]}"; do
                 cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
-listen = "$ipv4"
 port = $socks_port
 protocol = "socks"
-tag = "in_$ipv4"
+tag = "inbound_${ipv4}"
 [inbounds.settings]
 auth = "password"
 udp = true
@@ -343,39 +341,30 @@ pass = "$socks_pass"
 
 [[outbounds]]
 protocol = "freedom"
-tag = "out_$ipv4"
+tag = "outbound_${ipv4}"
 [outbounds.settings]
 domainStrategy = "UseIPv4"
 sendThrough = "$ipv4"
 
 [[routing.rules]]
 type = "field"
-inboundTag = ["in_$ipv4"]
-outboundTag = "out_$ipv4"
+inboundTag = ["inbound_${ipv4}"]
+outboundTag = "outbound_${ipv4}"
 
 EOF
                 socks_port=$((socks_port + 1))
             done
             ;;
         
-        2)  # IPv4进随机IPv4出（不重复直到耗尽）
-            echo -e "${YELLOW}策略2: IPv4进随机IPv4出（不重复直到耗尽）${NC}"
-            # 创建出站池文件
-            outbound_pool_file="/etc/xray/track/outbound_ipv4_pool.txt"
-            > "$outbound_pool_file"
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                echo "$ipv4" >> "$outbound_pool_file"
-            done
-            # 打乱出站IP顺序
-            shuf "$outbound_pool_file" -o "$outbound_pool_file"
-
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
+        2)  # IPv4进随机IPv4出
+            echo -e "${YELLOW}策略2: IPv4进随机IPv4出${NC}"
+            
+            # 入站配置
+            cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
-listen = "$ipv4"
 port = $socks_port
 protocol = "socks"
-tag = "in_$ipv4"
+tag = "inbound_ipv4_random"
 [inbounds.settings]
 auth = "password"
 udp = true
@@ -384,180 +373,135 @@ user = "$socks_user"
 pass = "$socks_pass"
 
 EOF
-            done
 
-            # 定义出站标签为 balancer
-            cat <<EOF >> /etc/xray/serve.toml
-[[outbounds]]
-type = "balancer"
-tag = "balancer_out"
-outbounds = [
-EOF
-
-            # 添加所有IPv4出站到balancer
+            # 配置所有IPv4出站
             for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
-    {
-        "protocol": "freedom",
-        "settings": {
-            "domainStrategy": "UseIPv4",
-            "sendThrough": "$ipv4"
-        },
-        "tag": "out_$ipv4"
-    },
-EOF
-            done
-
-            # 去除最后一个逗号并关闭数组
-            sed -i '$ s/,$//' /etc/xray/serve.toml
-            cat <<EOF >> /etc/xray/serve.toml
-]
-
-[[routing.rules]]
-type = "field"
-network = ["tcp", "udp"]
-outboundTag = "balancer_out"
-
-EOF
-            ;;
-    
-        3)  # IPv4进随机IPv6出（不重复直到耗尽）
-            echo -e "${YELLOW}策略3: IPv4进随机IPv6出（不重复直到耗尽）${NC}"
-            # 检查是否有IPv6地址
-            if [ ${#ipv6_addrs[@]} -eq 0 ]; then
-                echo -e "${RED}没有可用的IPv6地址，无法选择策略3。${NC}"
-                return 1
-            fi
-
-            # 创建出站池文件
-            outbound_pool_file="/etc/xray/track/outbound_ipv6_pool.txt"
-            > "$outbound_pool_file"
-            for ipv6 in "${ipv6_addrs[@]}"; do
-                echo "$ipv6" >> "$outbound_pool_file"
-            done
-            # 打乱出站IP顺序
-            shuf "$outbound_pool_file" -o "$outbound_pool_file"
-
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
-[[inbounds]]
-listen = "$ipv4"
-port = $socks_port
-protocol = "socks"
-tag = "in_$ipv4"
-[inbounds.settings]
-auth = "password"
-udp = true
-[[inbounds.settings.accounts]]
-user = "$socks_user"
-pass = "$socks_pass"
-
-EOF
-            done
-
-            # 定义出站标签为 balancer_out6
-            cat <<EOF >> /etc/xray/serve.toml
-[[outbounds]]
-type = "balancer"
-tag = "balancer_out6"
-outbounds = [
-EOF
-
-            # 添加所有IPv6出站到balancer
-            for ipv6 in "${ipv6_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
-    {
-        "protocol": "freedom",
-        "settings": {
-            "domainStrategy": "UseIPv6",
-            "sendThrough": "$ipv6"
-        },
-        "tag": "out_$ipv6"
-    },
-EOF
-            done
-
-            # 去除最后一个逗号并关闭数组
-            sed -i '$ s/,$//' /etc/xray/serve.toml
-            cat <<EOF >> /etc/xray/serve.toml
-]
-
-[[routing.rules]]
-type = "field"
-network = ["tcp", "udp"]
-outboundTag = "balancer_out6"
-
-EOF
-            ;;
-    
-        4)  # IPv4进，不同端口对应固定IPv6出（自动分配）
-            echo -e "${YELLOW}策略4: IPv4进，不同端口对应固定IPv6出（自动分配）${NC}"
-            local ipv6_count=${#ipv6_addrs[@]}
-            echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
-
-            if [ $ipv6_count -eq 0 ]; then
-                echo -e "${RED}没有可用的IPv6地址，无法选择策略4。${NC}"
-                return 1
-            fi
-
-            while true; do
-                read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
-                if ! [[ "$port_count" =~ ^[0-9]+$ ]] || [ "$port_count" -lt 1 ] || [ "$port_count" -gt "$ipv6_count" ]; then
-                    echo -e "${RED}请输入1到$ipv6_count之间的数字${NC}"
-                    continue
-                fi
-                break
-            done
-
-            echo -e "\n${YELLOW}端口与IPv6的对应关系：${NC}"
-            for ((i=0; i<port_count; i++)); do
-                current_port=$((socks_port + i))
-                current_ipv6=${ipv6_addrs[$i]}
-                echo -e "${GREEN}端口 $current_port -> IPv6: $current_ipv6${NC}"
-            done
-
-            read -p "确认使用以上配置？[y/N] " confirm
-            if [[ ! $confirm =~ ^[Yy]$ ]]; then
-                echo -e "${YELLOW}已取消配置${NC}"
-                return 1
-            fi
-
-            for ((i=0; i<port_count; i++)); do
-                current_port=$((socks_port + i))
-                current_ipv6=${ipv6_addrs[$i]}
-
-                for ipv4 in "${ipv4_addrs[@]}"; do
-                    cat <<EOF >> /etc/xray/serve.toml
-[[inbounds]]
-listen = "$ipv4"
-port = $current_port
-protocol = "socks"
-tag = "in_${current_port}"
-[inbounds.settings]
-auth = "password"
-udp = true
-[[inbounds.settings.accounts]]
-user = "$socks_user"
-pass = "$socks_pass"
-
-EOF
-                done
-
                 cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
-tag = "out_${current_port}"
+tag = "outbound_${ipv4}"
+[outbounds.settings]
+domainStrategy = "UseIPv4"
+sendThrough = "$ipv4"
+
+EOF
+            done
+
+            # 配置负载均衡
+            cat <<EOF >> /etc/xray/serve.toml
+[[balancers]]
+tag = "ipv4_balancer"
+selector = ["outbound_${ipv4_addrs[0]}"$(for ipv4 in "${ipv4_addrs[@]:1}"; do echo -n ", \"outbound_$ipv4\""; done)]
+strategy = "random"
+
+[[routing.rules]]
+type = "field"
+inboundTag = ["inbound_ipv4_random"]
+balancerTag = "ipv4_balancer"
+
+EOF
+            ;;
+
+        3)  # IPv4进随机IPv6出
+            echo -e "${YELLOW}策略3: IPv4进随机IPv6出${NC}"
+            
+            # 入站配置
+            cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+port = $socks_port
+protocol = "socks"
+tag = "inbound_ipv6_random"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+EOF
+
+            # 配置所有IPv6出站
+            for ipv6 in "${ipv6_addrs[@]}"; do
+                cat <<EOF >> /etc/xray/serve.toml
+[[outbounds]]
+protocol = "freedom"
+tag = "outbound_${ipv6//:/}_ipv6"
+[outbounds.settings]
+domainStrategy = "UseIPv6"
+sendThrough = "$ipv6"
+
+EOF
+            done
+
+            # 配置负载均衡
+            cat <<EOF >> /etc/xray/serve.toml
+[[balancers]]
+tag = "ipv6_balancer"
+selector = ["outbound_${ipv6_addrs[0]//:/}_ipv6"$(for ipv6 in "${ipv6_addrs[@]:1}"; do echo -n ", \"outbound_${ipv6//:/}_ipv6\""; done)]
+strategy = "random"
+
+[[routing.rules]]
+type = "field"
+inboundTag = ["inbound_ipv6_random"]
+balancerTag = "ipv6_balancer"
+
+EOF
+            ;;
+
+        4)  # IPv4进不同端口对应固定IPv6出
+            echo -e "${YELLOW}策略4: IPv4进不同端口对应固定IPv6出${NC}"
+            local ipv6_count=${#ipv6_addrs[@]}
+            
+            if [ $ipv6_count -eq 0 ]; then
+                echo -e "${RED}没有可用的IPv6地址${NC}"
+                return 1
+            fi
+
+            read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
+            if ! [[ "$port_count" =~ ^[0-9]+$ ]] || [ "$port_count" -lt 1 ] || [ "$port_count" -gt "$ipv6_count" ]; then
+                echo -e "${RED}无效的端口数量${NC}"
+                return 1
+            fi
+
+            echo -e "\n${YELLOW}配置详情：${NC}"
+            for ((i=0; i<port_count; i++)); do
+                current_port=$((socks_port + i))
+                current_ipv6=${ipv6_addrs[$i]}
+                echo -e "端口: ${GREEN}$current_port${NC} -> IPv6: ${GREEN}$current_ipv6${NC}"
+            done
+
+            read -p "确认配置？[y/N] " confirm
+            [[ ! $confirm =~ ^[Yy]$ ]] && return 1
+
+            for ((i=0; i<port_count; i++)); do
+                current_port=$((socks_port + i))
+                current_ipv6=${ipv6_addrs[$i]}
+                
+                cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+port = $current_port
+protocol = "socks"
+tag = "inbound_port_${current_port}"
+[inbounds.settings]
+auth = "password"
+udp = true
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+[[outbounds]]
+protocol = "freedom"
+tag = "outbound_port_${current_port}"
 [outbounds.settings]
 domainStrategy = "UseIPv6"
 sendThrough = "$current_ipv6"
 
 [[routing.rules]]
 type = "field"
-inboundTag = ["in_${current_port}"]
-outboundTag = "out_${current_port}"
+inboundTag = ["inbound_port_${current_port}"]
+outboundTag = "outbound_port_${current_port}"
 
 EOF
-                socks_port=$((socks_port + 1))
             done
             ;;
         *)
@@ -565,6 +509,9 @@ EOF
             return 1
             ;;
     esac
+
+    # 生成代理列表
+    generate_proxy_list $strategy $port_count
 
     # 检查配置文件
     if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
