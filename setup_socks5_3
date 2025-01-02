@@ -507,8 +507,8 @@ set_ip_strategy() {
     ipv4_addrs=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
     ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
 
-    echo "当前IPv4地址: ${ipv4_addrs[@]}"
-    echo "当前IPv6地址: ${ipv6_addrs[@]}"
+    echo -e "${GREEN}当前IPv4地址: ${ipv4_addrs[@]}${NC}"
+    echo -e "${GREEN}当前IPv6地址: ${ipv6_addrs[@]}${NC}"
 
     echo "请选择IP进出策略："
     echo "1. 同IP进同IP出（默认）"
@@ -524,14 +524,9 @@ set_ip_strategy() {
             echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
 
             while true; do
-                read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
+                read -p "请输入要配置的端口数量: " port_count
                 if ! [[ "$port_count" =~ ^[0-9]+$ ]]; then
                     echo -e "${RED}请输入有效的数字${NC}"
-                    continue
-                fi
-
-                if [ "$port_count" -gt "$ipv6_count" ]; then
-                    echo -e "${RED}错误: 端口数量($port_count)不能超过可用的IPv6地址数量($ipv6_count)${NC}"
                     continue
                 fi
 
@@ -543,10 +538,10 @@ set_ip_strategy() {
                 break
             done
 
+            # 创建端口到IPv6的映射
             declare -A port_ipv6_map
-
-            # 自动分配IPv6地址给端口
             echo -e "\n${YELLOW}端口与IPv6地址的对应关系：${NC}"
+            
             for ((i=0; i<port_count; i++)); do
                 current_port=$((socks_port + i))
                 ipv6_index=$((i % ipv6_count))
@@ -554,13 +549,98 @@ set_ip_strategy() {
                 echo -e "${GREEN}端口 $current_port -> IPv6: ${ipv6_addrs[$ipv6_index]}${NC}"
             done
 
+            # 显示配置确认
+            echo -e "\n${YELLOW}配置摘要：${NC}"
+            echo "总端口数量: $port_count"
+            echo "起始端口: $socks_port"
+            echo "结束端口: $((socks_port + port_count - 1))"
+            echo "IPv6地址数量: $ipv6_count"
+
             read -p "确认使用以上配置？[y/N] " confirm
             if [[ ! $confirm =~ ^[Yy]$ ]]; then
                 echo -e "${YELLOW}已取消配置${NC}"
                 return 1
             fi
 
-            configure_ip_strategy $strategy port_ipv6_map
+            # 生成配置文件
+            mkdir -p /etc/xray
+            echo -n "" > /etc/xray/serve.toml
+
+            # 为每个端口生成配置
+            for ((i=0; i<port_count; i++)); do
+                current_port=$((socks_port + i))
+                current_ipv6=${port_ipv6_map[$current_port]}
+
+                # 为每个IPv4地址创建入站配置
+                for ipv4 in "${ipv4_addrs[@]}"; do
+                    cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+listen = "$ipv4"
+port = $current_port
+protocol = "socks"
+tag = "in_${current_port}_${ipv4}"
+[inbounds.settings]
+auth = "password"
+udp = true
+ip = "$ipv4"
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+EOF
+                done
+
+                # 创建对应的出站配置
+                cat <<EOF >> /etc/xray/serve.toml
+[[outbounds]]
+protocol = "freedom"
+tag = "out_${current_port}"
+settings = { domainStrategy = "UseIPv6" }
+streamSettings = { sockopt = { mark = 255 } }
+sendThrough = "$current_ipv6"
+
+EOF
+
+                # 添加路由规则
+                for ipv4 in "${ipv4_addrs[@]}"; do
+                    cat <<EOF >> /etc/xray/serve.toml
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_${current_port}_${ipv4}"]
+outboundTag = "out_${current_port}"
+
+EOF
+                done
+            done
+
+            # 验证配置
+            if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
+                echo -e "${RED}Xray 配置验证失败${NC}"
+                return 1
+            fi
+
+            # 重启服务
+            systemctl restart xray
+            sleep 2
+
+            if ! systemctl is-active --quiet xray; then
+                echo -e "${RED}Xray 服务启动失败${NC}"
+                systemctl status xray
+                return 1
+            fi
+
+            echo -e "${GREEN}配置已完成，正在启动服务...${NC}"
+            
+            # 生成代理列表
+            echo -n "" > /root/proxy_list.txt
+            for ((i=0; i<port_count; i++)); do
+                current_port=$((socks_port + i))
+                for ipv4 in "${ipv4_addrs[@]}"; do
+                    echo "$ipv4:$current_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
+                done
+            done
+
+            echo -e "${GREEN}代理列表已更新: /root/proxy_list.txt${NC}"
             ;;
         1|2|3)
             configure_ip_strategy $strategy
