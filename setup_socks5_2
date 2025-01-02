@@ -556,12 +556,37 @@ set_ip_strategy() {
     return 0
 }
 
-# 代理设置模块
+# SOCKS5配置模块
 set_socks5_credentials() {
+    # 检查 XrayL 是否已安装
+    if ! [ -x "$(command -v xrayL)" ]; then
+        echo "XrayL 未安装，请先运行环境配置（选项1）"
+        return 1
+    }
+
     read -p "请输入SOCKS5起始端口: " socks_port
     read -p "请输入用户名: " socks_user
     read -p "请输入密码: " socks_pass
+
+    # 验证输入
+    if ! [[ "$socks_port" =~ ^[0-9]+$ ]] || [ "$socks_port" -lt 1 ] || [ "$socks_port" -gt 65535 ]; then
+        echo -e "${RED}无效的端口号${NC}"
+        return 1
+    fi
+
+    if [ -z "$socks_user" ] || [ -z "$socks_pass" ]; then
+        echo -e "${RED}用户名和密码不能为空${NC}"
+        return 1
+    fi
+
+    # 保存配置
+    echo "SOCKS_PORT=$socks_port" > /etc/xrayL/credentials
+    echo "SOCKS_USER=$socks_user" >> /etc/xrayL/credentials
+    echo "SOCKS_PASS=$socks_pass" >> /etc/xrayL/credentials
+
+    # 设置IP策略
     set_ip_strategy
+
     echo "SOCKS5端口、用户名和密码设置完成。"
     return 0
 }
@@ -791,24 +816,60 @@ show_menu() {
 
     read -p "请输入选项 [1-10]: " option
     case $option in
-        1) setup_environment ;;
-        2) enable_bbr ;;
-        3) ipv6_manager_menu ;;
-        4) setup_bandwidth_control ;;
-        5) set_socks5_credentials ;;
-        6) set_ip_strategy ;;
-        7) test_proxy_connectivity ;;
+        1) 
+            install_xray 
+            ;;
+        2) 
+            enable_bbr 
+            ;;
+        3) 
+            ipv6_manager_menu 
+            ;;
+        4) 
+            setup_bandwidth_control 
+            ;;
+        5) 
+            if ! [ -x "$(command -v xrayL)" ]; then
+                echo "请先运行环境配置（选项1）安装 XrayL"
+                return 1
+            fi
+            set_socks5_credentials 
+            ;;
+        6) 
+            if ! [ -x "$(command -v xrayL)" ]; then
+                echo "请先运行环境配置（选项1）安装 XrayL"
+                return 1
+            fi
+            set_ip_strategy 
+            ;;
+        7) 
+            test_proxy_connectivity 
+            ;;
         8) 
             if [ -f /root/proxy_list.txt ]; then
                 cat /root/proxy_list.txt
             else
-                echo -e "${RED}/root/proxy_list.txt 文件不存在。${NC}"
+                echo -e "${RED}/root/proxy_list.txt 文件不存在${NC}"
             fi
             ;;
-        9) clear_proxy_rules ;;
-        10) echo "退出脚本。"; exit ;;
-        *) echo -e "${RED}无效选项，请输入1-10之间的数字${NC}" ;;
+        9) 
+            systemctl stop xrayL.service
+            rm -f /etc/xrayL/config.toml
+            rm -f /root/proxy_list.txt
+            echo -e "${GREEN}所有代理规则已清除${NC}"
+            ;;
+        10) 
+            echo "退出脚本"
+            exit 0 
+            ;;
+        *) 
+            echo -e "${RED}无效选项，请输入1-10之间的数字${NC}" 
+            ;;
     esac
+
+    # 暂停以便查看输出
+    echo -e "\n按回车键继续..."
+    read
 }
 
 # 主程序
