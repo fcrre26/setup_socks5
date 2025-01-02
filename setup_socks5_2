@@ -291,23 +291,20 @@ set_ip_strategy() {
     ipv4_addrs=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
     ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
 
-    # 检查是否获取到IPv4和IPv6地址
+    # 检查地址可用性
     if [ ${#ipv4_addrs[@]} -eq 0 ]; then
-        echo -e "${RED}未检测到有效的IPv4地址，请确保服务器已配置至少一个IPv4地址。${NC}"
+        echo -e "${RED}未检测到有效的IPv4地址${NC}"
         return 1
     fi
 
     if [ ${#ipv6_addrs[@]} -eq 0 ]; then
-        echo -e "${YELLOW}未检测到IPv6地址，某些策略可能无法使用。${NC}"
+        echo -e "${YELLOW}未检测到IPv6地址，某些策略可能无法使用${NC}"
     fi
 
-    # 如果没有之前设置的信息，先获取
-    if [ -z "$socks_port" ] || [ -z "$socks_user" ] || [ -z "$socks_pass" ]; then
-        set_socks5_credentials
-    fi
-
-    # 创建追踪目录
-    mkdir -p /etc/xray/track
+    # 如果没有之前设置的信息，使用默认值
+    socks_port=${socks_port:-$DEFAULT_START_PORT}
+    socks_user=${socks_user:-$DEFAULT_SOCKS_USERNAME}
+    socks_pass=${socks_pass:-$DEFAULT_SOCKS_PASSWORD}
 
     echo "当前IPv4地址: ${ipv4_addrs[@]}"
     echo "当前IPv6地址: ${ipv6_addrs[@]}"
@@ -320,132 +317,141 @@ set_ip_strategy() {
     read -p "请输入选项 [1-4]: " strategy
 
     # 创建配置目录和清空配置文件
-    mkdir -p /etc/xray
-    echo -n "" > /etc/xray/serve.toml
+    mkdir -p /etc/xrayL
+    echo -n "" > /etc/xrayL/config.toml
 
     case $strategy in
         1)  # 同IP进同IP出
             echo -e "${YELLOW}策略1: 同IP进同IP出${NC}"
+            config_content=""
             for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
-[[inbounds]]
-port = $socks_port
-protocol = "socks"
-tag = "inbound_${ipv4}"
-[inbounds.settings]
-auth = "password"
-udp = true
-[[inbounds.settings.accounts]]
-user = "$socks_user"
-pass = "$socks_pass"
+                config_content+="[[inbounds]]\n"
+                config_content+="port = $socks_port\n"
+                config_content+="protocol = \"socks\"\n"
+                config_content+="tag = \"inbound_${ipv4}\"\n"
+                config_content+="[inbounds.settings]\n"
+                config_content+="auth = \"password\"\n"
+                config_content+="udp = true\n"
+                config_content+="ip = \"${ipv4}\"\n"
+                config_content+="[[inbounds.settings.accounts]]\n"
+                config_content+="user = \"$socks_user\"\n"
+                config_content+="pass = \"$socks_pass\"\n\n"
 
-[[outbounds]]
-protocol = "freedom"
-tag = "outbound_${ipv4}"
-[outbounds.settings]
-domainStrategy = "UseIPv4"
-sendThrough = "$ipv4"
+                config_content+="[[outbounds]]\n"
+                config_content+="protocol = \"freedom\"\n"
+                config_content+="tag = \"outbound_${ipv4}\"\n"
+                config_content+="sendThrough = \"${ipv4}\"\n\n"
 
-[[routing.rules]]
-type = "field"
-inboundTag = ["inbound_${ipv4}"]
-outboundTag = "outbound_${ipv4}"
+                config_content+="[[routing.rules]]\n"
+                config_content+="type = \"field\"\n"
+                config_content+="inboundTag = [\"inbound_${ipv4}\"]\n"
+                config_content+="outboundTag = \"outbound_${ipv4}\"\n\n"
 
-EOF
                 socks_port=$((socks_port + 1))
             done
             ;;
-        
+
         2)  # IPv4进随机IPv4出
             echo -e "${YELLOW}策略2: IPv4进随机IPv4出${NC}"
+            config_content=""
             
-            # 入站配置
-            cat <<EOF >> /etc/xray/serve.toml
-[[inbounds]]
-port = $socks_port
-protocol = "socks"
-tag = "inbound_ipv4_random"
-[inbounds.settings]
-auth = "password"
-udp = true
-[[inbounds.settings.accounts]]
-user = "$socks_user"
-pass = "$socks_pass"
+            # 创建负载均衡组
+            config_content+="[[outbounds]]\n"
+            config_content+="protocol = \"freedom\"\n"
+            config_content+="tag = \"ipv4_random\"\n"
+            config_content+="settings = { domainStrategy = \"UseIPv4\" }\n\n"
 
-EOF
-
-            # 配置所有IPv4出站
+            # 为每个IPv4创建出站
             for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
-[[outbounds]]
-protocol = "freedom"
-tag = "outbound_${ipv4}"
-[outbounds.settings]
-domainStrategy = "UseIPv4"
-sendThrough = "$ipv4"
-
-EOF
+                config_content+="[[outbounds]]\n"
+                config_content+="protocol = \"freedom\"\n"
+                config_content+="tag = \"outbound_${ipv4}\"\n"
+                config_content+="sendThrough = \"${ipv4}\"\n\n"
             done
 
-            # 配置负载均衡
-            cat <<EOF >> /etc/xray/serve.toml
-[[balancers]]
-tag = "ipv4_balancer"
-selector = ["outbound_${ipv4_addrs[0]}"$(for ipv4 in "${ipv4_addrs[@]:1}"; do echo -n ", \"outbound_$ipv4\""; done)]
-strategy = "random"
+            # 创建入站
+            config_content+="[[inbounds]]\n"
+            config_content+="port = $socks_port\n"
+            config_content+="protocol = \"socks\"\n"
+            config_content+="tag = \"inbound_ipv4_random\"\n"
+            config_content+="[inbounds.settings]\n"
+            config_content+="auth = \"password\"\n"
+            config_content+="udp = true\n"
+            config_content+="[[inbounds.settings.accounts]]\n"
+            config_content+="user = \"$socks_user\"\n"
+            config_content+="pass = \"$socks_pass\"\n\n"
 
-[[routing.rules]]
-type = "field"
-inboundTag = ["inbound_ipv4_random"]
-balancerTag = "ipv4_balancer"
+            # 创建负载均衡规则
+            config_content+="[[routing.balancers]]\n"
+            config_content+="tag = \"ipv4_balancer\"\n"
+            config_content+="strategy = \"random\"\n"
+            config_content+="selector = ["
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                config_content+="\"outbound_${ipv4}\","
+            done
+            config_content="${config_content%,}]\n\n"
 
-EOF
+            # 创建路由规则
+            config_content+="[[routing.rules]]\n"
+            config_content+="type = \"field\"\n"
+            config_content+="inboundTag = [\"inbound_ipv4_random\"]\n"
+            config_content+="balancerTag = \"ipv4_balancer\"\n\n"
             ;;
 
         3)  # IPv4进随机IPv6出
             echo -e "${YELLOW}策略3: IPv4进随机IPv6出${NC}"
+            if [ ${#ipv6_addrs[@]} -eq 0 ]; then
+                echo -e "${RED}没有可用的IPv6地址${NC}"
+                return 1
+            fi
+
+            config_content=""
             
-            # 入站配置
-            cat <<EOF >> /etc/xray/serve.toml
-[[inbounds]]
-port = $socks_port
-protocol = "socks"
-tag = "inbound_ipv6_random"
-[inbounds.settings]
-auth = "password"
-udp = true
-[[inbounds.settings.accounts]]
-user = "$socks_user"
-pass = "$socks_pass"
+            # 创建负载均衡组
+            config_content+="[[outbounds]]\n"
+            config_content+="protocol = \"freedom\"\n"
+            config_content+="tag = \"ipv6_random\"\n"
+            config_content+="settings = { domainStrategy = \"UseIPv6\" }\n\n"
 
-EOF
-
-            # 配置所有IPv6出站
+            # 为每个IPv6创建出站
             for ipv6 in "${ipv6_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
-[[outbounds]]
-protocol = "freedom"
-tag = "outbound_${ipv6//:/}_ipv6"
-[outbounds.settings]
-domainStrategy = "UseIPv6"
-sendThrough = "$ipv6"
-
-EOF
+                config_content+="[[outbounds]]\n"
+                config_content+="protocol = \"freedom\"\n"
+                config_content+="tag = \"outbound_${ipv6//:/}\"\n"
+                config_content+="[outbounds.settings]\n"
+                config_content+="domainStrategy = \"UseIPv6\"\n"
+                config_content+="[outbounds.streamSettings]\n"
+                config_content+="[outbounds.streamSettings.sockopt]\n"
+                config_content+="bindAddress = \"$ipv6\"\n\n"
             done
 
-            # 配置负载均衡
-            cat <<EOF >> /etc/xray/serve.toml
-[[balancers]]
-tag = "ipv6_balancer"
-selector = ["outbound_${ipv6_addrs[0]//:/}_ipv6"$(for ipv6 in "${ipv6_addrs[@]:1}"; do echo -n ", \"outbound_${ipv6//:/}_ipv6\""; done)]
-strategy = "random"
+            # 创建入站
+            config_content+="[[inbounds]]\n"
+            config_content+="port = $socks_port\n"
+            config_content+="protocol = \"socks\"\n"
+            config_content+="tag = \"inbound_ipv6_random\"\n"
+            config_content+="[inbounds.settings]\n"
+            config_content+="auth = \"password\"\n"
+            config_content+="udp = true\n"
+            config_content+="[[inbounds.settings.accounts]]\n"
+            config_content+="user = \"$socks_user\"\n"
+            config_content+="pass = \"$socks_pass\"\n\n"
 
-[[routing.rules]]
-type = "field"
-inboundTag = ["inbound_ipv6_random"]
-balancerTag = "ipv6_balancer"
+            # 创建负载均衡规则
+            config_content+="[[routing.balancers]]\n"
+            config_content+="tag = \"ipv6_balancer\"\n"
+            config_content+="strategy = \"random\"\n"
+            config_content+="selector = ["
+            for ipv6 in "${ipv6_addrs[@]}"; do
+                config_content+="\"outbound_${ipv6//:/}\","
+            done
+            config_content="${config_content%,}]\n\n"
 
-EOF
+            # 创建路由规则
+            config_content+="[[routing.rules]]\n"
+            config_content+="type = \"field\"\n"
+            config_content+="inboundTag = [\"inbound_ipv6_random\"]\n"
+            config_content+="balancerTag = \"ipv6_balancer\"\n\n"
             ;;
 
         4)  # IPv4进不同端口对应固定IPv6出
@@ -463,45 +469,35 @@ EOF
                 return 1
             fi
 
-            echo -e "\n${YELLOW}配置详情：${NC}"
-            for ((i=0; i<port_count; i++)); do
-                current_port=$((socks_port + i))
-                current_ipv6=${ipv6_addrs[$i]}
-                echo -e "端口: ${GREEN}$current_port${NC} -> IPv6: ${GREEN}$current_ipv6${NC}"
-            done
-
-            read -p "确认配置？[y/N] " confirm
-            [[ ! $confirm =~ ^[Yy]$ ]] && return 1
-
+            config_content=""
             for ((i=0; i<port_count; i++)); do
                 current_port=$((socks_port + i))
                 current_ipv6=${ipv6_addrs[$i]}
                 
-                cat <<EOF >> /etc/xray/serve.toml
-[[inbounds]]
-port = $current_port
-protocol = "socks"
-tag = "inbound_port_${current_port}"
-[inbounds.settings]
-auth = "password"
-udp = true
-[[inbounds.settings.accounts]]
-user = "$socks_user"
-pass = "$socks_pass"
+                config_content+="[[inbounds]]\n"
+                config_content+="port = $current_port\n"
+                config_content+="protocol = \"socks\"\n"
+                config_content+="tag = \"inbound_port_${current_port}\"\n"
+                config_content+="[inbounds.settings]\n"
+                config_content+="auth = \"password\"\n"
+                config_content+="udp = true\n"
+                config_content+="[[inbounds.settings.accounts]]\n"
+                config_content+="user = \"$socks_user\"\n"
+                config_content+="pass = \"$socks_pass\"\n\n"
 
-[[outbounds]]
-protocol = "freedom"
-tag = "outbound_port_${current_port}"
-[outbounds.settings]
-domainStrategy = "UseIPv6"
-sendThrough = "$current_ipv6"
+                config_content+="[[outbounds]]\n"
+                config_content+="protocol = \"freedom\"\n"
+                config_content+="tag = \"outbound_port_${current_port}\"\n"
+                config_content+="[outbounds.settings]\n"
+                config_content+="domainStrategy = \"UseIPv6\"\n"
+                config_content+="[outbounds.streamSettings]\n"
+                config_content+="[outbounds.streamSettings.sockopt]\n"
+                config_content+="bindAddress = \"$current_ipv6\"\n\n"
 
-[[routing.rules]]
-type = "field"
-inboundTag = ["inbound_port_${current_port}"]
-outboundTag = "outbound_port_${current_port}"
-
-EOF
+                config_content+="[[routing.rules]]\n"
+                config_content+="type = \"field\"\n"
+                config_content+="inboundTag = [\"inbound_port_${current_port}\"]\n"
+                config_content+="outboundTag = \"outbound_port_${current_port}\"\n\n"
             done
             ;;
         *)
@@ -510,83 +506,53 @@ EOF
             ;;
     esac
 
-    # 生成代理列表
-    generate_proxy_list $strategy $port_count
+    # 写入配置文件
+    echo -e "$config_content" > /etc/xrayL/config.toml
 
-    # 检查配置文件
-    if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
-        echo -e "${RED}Xray 配置验证失败${NC}"
-        return 1
-    fi
-
-    # 重启 Xray 服务
-    systemctl daemon-reload
-    systemctl restart xray.service
+    # 重启服务
+    systemctl restart xrayL.service
     sleep 2
 
-    if ! systemctl is-active --quiet xray.service; then
-        echo -e "${RED}Xray 服务启动失败${NC}"
-        systemctl status xray.service
+    if ! systemctl is-active --quiet xrayL.service; then
+        echo -e "${RED}XrayL 服务启动失败${NC}"
+        systemctl status xrayL.service
         return 1
     fi
 
-    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
-    return 0
-}
-
-# 代理管理模块
-generate_proxy_list() {
-    local strategy=$1
-    local port_count=$2
-    echo "生成代理列表文件..."
-    echo -n "" > /root/proxy_list.txt
-
+    # 生成代理列表
+    echo -e "\n# 策略配置信息" > /root/proxy_list.txt
     case $strategy in
-        1)  # 同IP进同IP出
+        1)
             echo -e "# 策略：同IP进同IP出\n" >> /root/proxy_list.txt
             for ipv4 in "${ipv4_addrs[@]}"; do
                 echo "$ipv4:$socks_port:$socks_user:$socks_pass # 出口: $ipv4" >> /root/proxy_list.txt
+                socks_port=$((socks_port + 1))
             done
             ;;
-        
-        2)  # IPv4进随机IPv4出
+        2)
             echo -e "# 策略：IPv4进随机IPv4出\n" >> /root/proxy_list.txt
             echo -e "# 可能的出口IP: ${ipv4_addrs[*]}\n" >> /root/proxy_list.txt
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                echo "$ipv4:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
-            done
+            echo "$ipv4_addrs:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
             ;;
-        
-        3)  # IPv4进随机IPv6出
+        3)
             echo -e "# 策略：IPv4进随机IPv6出\n" >> /root/proxy_list.txt
             echo -e "# 可能的出口IP: ${ipv6_addrs[*]}\n" >> /root/proxy_list.txt
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                echo "$ipv4:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
-            done
+            echo "$ipv4_addrs:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
             ;;
-        4)  # IPv4进不同端口对应固定IPv6出
-    echo -e "# 策略：IPv4进不同端口对应固定IPv6出\n" >> /root/proxy_list.txt
-    
-    # 遍历每个端口
-    for ((i=0; i<port_count; i++)); do
-        current_port=$((socks_port + i))
-        current_ipv6=${ipv6_addrs[$i]}
-        
-        echo -e "\n# 端口 $current_port 对应的IPv6出口: $current_ipv6" >> /root/proxy_list.txt
-        
-        # 为每个IPv4地址生成代理条目
-        for ipv4 in "${ipv4_addrs[@]}"; do
-            echo "$ipv4:$current_port:$socks_user:$socks_pass # 出口: $current_ipv6" >> /root/proxy_list.txt
-        done
-    done
+        4)
+            echo -e "# 策略：IPv4进不同端口对应固定IPv6出\n" >> /root/proxy_list.txt
+            for ((i=0; i<port_count; i++)); do
+                current_port=$((socks_port + i))
+                current_ipv6=${ipv6_addrs[$i]}
+                echo -e "\n# 端口 $current_port 对应的IPv6出口: $current_ipv6" >> /root/proxy_list.txt
+                for ipv4 in "${ipv4_addrs[@]}"; do
+                    echo "$ipv4:$current_port:$socks_user:$socks_pass # 出口: $current_ipv6" >> /root/proxy_list.txt
+                done
+            done
             ;;
     esac
 
-    echo -e "\n代理列表已生成到: /root/proxy_list.txt"
-    
-    # 显示生成的代理列表
-    echo -e "\n${YELLOW}生成的代理列表：${NC}"
-    cat /root/proxy_list.txt
+    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
     return 0
 }
 
