@@ -118,7 +118,7 @@ Description=The Xray Proxy Server
 After=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/xray -c /etc/xray/serve.toml
+ExecStart=/usr/local/bin/xray -c /etc/xray/serve.json
 ExecStop=/bin/kill -s QUIT \$MAINPID
 Restart=always
 RestartSec=15s
@@ -368,12 +368,12 @@ configure_ip_strategy() {
     # 清空现有配置
     echo -e "${YELLOW}清空现有配置...${NC}"
     mkdir -p /etc/xray
-    echo -n "" > /etc/xray/serve.toml
+    echo -n "" > /etc/xray/serve.json
     
     case $strategy in
         1)  # 同IP进出
             echo -e "${GREEN}配置策略：同IP进同IP出${NC}"
-            cat <<EOF > /etc/xray/serve.toml
+            cat <<EOF > /etc/xray/serve.json
 {
   "inbounds": [
 EOF
@@ -383,10 +383,10 @@ EOF
                 if [ "$first" = true ]; then
                     first=false
                 else
-                    echo "," >> /etc/xray/serve.toml
+                    echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
     {
       "port": $socks_port,
       "protocol": "socks",
@@ -406,7 +406,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.json
   ],
   "outbounds": [
 EOF
@@ -417,10 +417,10 @@ EOF
                 if [ "$first" = true ]; then
                     first=false
                 else
-                    echo "," >> /etc/xray/serve.toml
+                    echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
     {
       "protocol": "freedom",
       "tag": "outbound_${ipv4//./}",
@@ -432,7 +432,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.json
   ],
   "routing": {
     "rules": [
@@ -444,10 +444,10 @@ EOF
                 if [ "$first" = true ]; then
                     first=false
                 else
-                    echo "," >> /etc/xray/serve.toml
+                    echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
       {
         "type": "field",
         "inboundTag": ["inbound_${ipv4//./}"],
@@ -456,7 +456,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.json
     ]
   }
 }
@@ -465,7 +465,7 @@ EOF
             
         2)  # IPv4进随机IPv4出
             echo -e "${GREEN}配置策略：IPv4进随机IPv4出${NC}"
-            cat <<EOF > /etc/xray/serve.toml
+            cat <<EOF > /etc/xray/serve.json
 {
   "inbounds": [
 EOF
@@ -475,10 +475,10 @@ EOF
                 if [ "$first" = true ]; then
                     first=false
                 else
-                    echo "," >> /etc/xray/serve.toml
+                    echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
     {
       "port": $socks_port,
       "protocol": "socks",
@@ -498,7 +498,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.json
   ],
   "outbounds": [
 EOF
@@ -509,10 +509,10 @@ EOF
                 if [ "$first" = true ]; then
                     first=false
                 else
-                    echo "," >> /etc/xray/serve.toml
+                    echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
     {
       "protocol": "freedom",
       "tag": "outbound_${ipv4//./}",
@@ -524,7 +524,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.json
   ],
   "routing": {
     "balancers": [
@@ -539,12 +539,12 @@ EOF
                 if [ "$first" = true ]; then
                     first=false
                 else
-                    echo "," >> /etc/xray/serve.toml
+                    echo "," >> /etc/xray/serve.json
                 fi
-                echo "          \"outbound_${ipv4//./}\"" >> /etc/xray/serve.toml
+                echo "          \"outbound_${ipv4//./}\"" >> /etc/xray/serve.json
             done
 
-            cat <<EOF >> /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.json
         ],
         "strategy": "random"
       }
@@ -558,10 +558,10 @@ EOF
                 if [ "$first" = true ]; then
                     first=false
                 else
-                    echo "," >> /etc/xray/serve.toml
+                    echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
       {
         "type": "field",
         "inboundTag": ["inbound_${ipv4//./}"],
@@ -570,7 +570,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.json
     ]
   }
 }
@@ -579,7 +579,7 @@ EOF
             
         3)  # IPv4进随机IPv6出
             echo -e "${GREEN}配置策略：IPv4进随机IPv6出${NC}"
-            cat <<EOF > /etc/xray/serve.toml
+            cat <<EOF > /etc/xray/serve.json
 {
   "inbounds": [
     {
@@ -608,10 +608,10 @@ EOF
                 if [ "$first" = true ]; then
                     first=false
                 else
-                    echo "," >> /etc/xray/serve.toml
+                    echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
     {
       "protocol": "freedom",
       "tag": "outbound_${ipv6//:/}",
@@ -623,7 +623,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.json
   ],
   "routing": {
     "balancers": [
@@ -638,12 +638,12 @@ EOF
                 if [ "$first" = true ]; then
                     first=false
                 else
-                    echo "," >> /etc/xray/serve.toml
+                    echo "," >> /etc/xray/serve.json
                 fi
-                echo "          \"outbound_${ipv6//:/}\"" >> /etc/xray/serve.toml
+                echo "          \"outbound_${ipv6//:/}\"" >> /etc/xray/serve.json
             done
 
-            cat <<EOF >> /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.json
         ],
         "strategy": "random"
       }
@@ -662,7 +662,7 @@ EOF
             
         4)  # IPv4进固定IPv6出
             echo -e "${GREEN}配置策略：IPv4进固定IPv6出${NC}"
-            cat <<EOF > /etc/xray/serve.toml
+            cat <<EOF > /etc/xray/serve.json
 {
   "inbounds": [
 EOF
@@ -673,10 +673,10 @@ EOF
                 if [ "$first" = true ]; then
                     first=false
                 else
-                    echo "," >> /etc/xray/serve.toml
+                    echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
     {
       "port": $port,
       "protocol": "socks",
@@ -696,7 +696,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.json
   ],
   "outbounds": [
 EOF
@@ -708,10 +708,10 @@ EOF
                 if [ "$first" = true ]; then
                     first=false
                 else
-                    echo "," >> /etc/xray/serve.toml
+                    echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
     {
       "protocol": "freedom",
       "tag": "outbound_${port}",
@@ -723,7 +723,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.json
   ],
   "routing": {
     "rules": [
@@ -735,10 +735,10 @@ EOF
                 if [ "$first" = true ]; then
                     first=false
                 else
-                    echo "," >> /etc/xray/serve.toml
+                    echo "," >> /etc/xray/serve.jsonl
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.toml
+                cat <<EOF >> /etc/xray/serve.json
       {
         "type": "field",
         "inboundTag": ["inbound_${port}"],
@@ -747,7 +747,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.json
     ]
   }
 }
@@ -757,7 +757,7 @@ EOF
 
     # 检查配置文件
     echo -e "${YELLOW}验证配置文件...${NC}"
-    if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve.json; then
         echo -e "${RED}Xray 配置验证失败${NC}"
         return 1
     fi
@@ -914,7 +914,7 @@ clear_proxy_rules() {
     echo "清除所有代理规则..."
     $service_manager stop xray
     $service_manager disable xray
-    rm -f /etc/xray/serve.toml
+    rm -f /etc/xray/serve.json
     rm -f /etc/systemd/system/xray.service
     iptables -F
     iptables -X
