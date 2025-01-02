@@ -493,6 +493,7 @@ network = ["tcp", "udp"]
 outboundTag = "random_ipv6_out"
 EOF
             ;;
+
 4)  # IPv4进不同端口对应固定IPv6出
     local ipv6_count=${#ipv6_addrs[@]}
     echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
@@ -526,7 +527,7 @@ EOF
         current_port=$((socks_port + i))
         current_ipv6=${ipv6_addrs[$i]}
         
-        # 为每个端口配置入站（所有IPv4地址都监听这个端口）
+        # 为每个端口配置入站
         for ipv4 in "${ipv4_addrs[@]}"; do
             cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
