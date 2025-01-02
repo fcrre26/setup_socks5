@@ -284,7 +284,6 @@ show_current_ipv6() {
 }
 
 # IP策略配置模块
-# IP策略配置模块
 configure_ip_strategy() {
     local strategy=$1
     local -n port_map # 修改声明方式
@@ -381,39 +380,43 @@ balancerTag = "ipv4_balancer"
 EOF
             done
             ;;
-    3)  # IPv4进随机IPv6出（不重复直到耗尽）
+
+3)  # IPv4进随机IPv6出（不重复直到耗尽）
+    # 首先生成所有 outbound tags
+    ipv6_shuffled=($(printf "%s\n" "${ipv6_addrs[@]}" | shuf))
+    outbound_tags=()
+    for ipv6 in "${ipv6_shuffled[@]}"; do
+        outbound_tags+=("outbound_$(echo $ipv6 | tr ':.' '_')")
+    done
+
+    # 检查是否有可用的 IPv6 地址
+    if [ ${#outbound_tags[@]} -eq 0 ]; then
+        echo -e "${RED}错误：没有可用的IPv6地址${NC}"
+        return 1
+    fi
+
+    # 生成配置文件
     cat <<EOF > /etc/xray/serve.json
 {
-    "inbounds": [
-        {
-            "listen": "${ipv4_addrs[0]}",
-            "port": $socks_port,
-            "protocol": "socks",
-            "tag": "inbound-ipv4",
-            "settings": {
-                "auth": "password",
-                "udp": true,
-                "accounts": [
-                    {
-                        "user": "$socks_user",
-                        "pass": "$socks_pass"
-                    }
-                ]
-            }
+    "inbounds": [{
+        "listen": "${ipv4_addrs[0]}",
+        "port": $socks_port,
+        "protocol": "socks",
+        "tag": "inbound-ipv4",
+        "settings": {
+            "auth": "password",
+            "udp": true,
+            "accounts": [{"user": "$socks_user", "pass": "$socks_pass"}]
         }
-    ],
+    }],
     "outbounds": [
 EOF
 
-    # 随机打乱 IPv6 地址数组
-    ipv6_shuffled=($(printf "%s\n" "${ipv6_addrs[@]}" | shuf))
-    
-    # 写入所有IPv6出站配置（已打乱顺序）
+    # 写入出站配置
     first=true
-    outbound_tags=()
-    for ipv6 in "${ipv6_shuffled[@]}"; do
-        safe_tag="outbound_$(echo $ipv6 | tr ':.' '_')"
-        outbound_tags+=("$safe_tag")
+    for i in "${!ipv6_shuffled[@]}"; do
+        ipv6=${ipv6_shuffled[$i]}
+        tag=${outbound_tags[$i]}
         
         if [ "$first" = true ]; then
             first=false
@@ -424,41 +427,51 @@ EOF
         cat <<EOF >> /etc/xray/serve.json
         {
             "protocol": "freedom",
-            "tag": "$safe_tag",
-            "settings": {
-                "domainStrategy": "UseIPv6"
-            },
-            "streamSettings": {
-                "sockopt": {
-                    "mark": 255
-                }
-            },
+            "tag": "$tag",
+            "settings": {"domainStrategy": "UseIPv6"},
+            "streamSettings": {"sockopt": {"mark": 255}},
             "sendThrough": "$ipv6"
         }
 EOF
     done
 
-    # 写入路由和负载均衡配置
+    # 完成配置文件
     cat <<EOF >> /etc/xray/serve.json
     ],
     "routing": {
-        "rules": [
-            {
-                "type": "field",
-                "inboundTag": ["inbound-ipv4"],
-                "balancerTag": "ipv6_balancer"
-            }
-        ],
-        "balancers": [
-            {
-                "tag": "ipv6_balancer",
-                "selector": [$(printf '"%s",' "${outbound_tags[@]}" | sed 's/,$//')],
-                "strategy": "round-robin"
-            }
-        ]
+        "balancers": [{
+            "tag": "ipv6_balancer",
+            "selector": [$(printf '"%s",' "${outbound_tags[@]}" | sed 's/,$//')],
+            "strategy": "round-robin"
+        }],
+        "rules": [{
+            "type": "field",
+            "inboundTag": ["inbound-ipv4"],
+            "balancerTag": "ipv6_balancer"
+        }]
     }
 }
 EOF
+
+    # 验证配置
+    echo -e "${YELLOW}验证配置文件...${NC}"
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve.json; then
+        echo -e "${RED}配置验证失败，配置文件内容：${NC}"
+        cat /etc/xray/serve.json
+        return 1
+    fi
+
+    # 重启 Xray 服务
+    systemctl restart xray
+    sleep 2
+
+    if ! systemctl is-active --quiet xray; then
+        echo -e "${RED}Xray 服务启动失败${NC}"
+        systemctl status xray
+        return 1
+    fi
+
+    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
     ;;
     
         4)  # IPv4进，不同端口对应固定IPv6出
