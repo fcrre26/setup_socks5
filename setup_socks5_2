@@ -708,10 +708,10 @@ ipv6_manager_menu() {
 
                 # 先显示当前IPv6信息
                 echo -e "${YELLOW}当前IPv6配置：${NC}"
-                ip -6 addr show dev $INTERFACE
+                ip -6 addr show dev "$INTERFACE"
 
                 # 获取IPv6前缀
-                PREFIX=$(ip -6 addr show dev $INTERFACE | grep "scope global" | grep -v "temporary" | head -n1 | awk '{print $2}' | cut -d'/' -f1 | sed -E 's/:[^:]+:[^:]+:[^:]+:[^:]+$/::/')
+                PREFIX=$(ip -6 addr show dev "$INTERFACE" | grep "scope global" | grep -v "temporary" | head -n1 | awk '{print $2}' | cut -d'/' -f1 | sed -E 's/:[^:]+:[^:]+:[^:]+:[^:]+$/::/')
 
                 if [ -z "$PREFIX" ]; then
                     echo -e "${RED}无法获取IPv6前缀${NC}"
@@ -726,25 +726,28 @@ ipv6_manager_menu() {
                     continue
                 fi
 
-                add_ipv6_addresses "$INTERFACE" "$PREFIX" "$num_addresses"
+                # 确保函数在子shell中执行
+                (
+                    add_ipv6_addresses "$INTERFACE" "$PREFIX" "$num_addresses"
+                )
                 ;;
             2)
                 INTERFACE=$(get_main_interface)
                 if [ $? -eq 0 ]; then
-                    delete_all_ipv6 $INTERFACE
+                    delete_all_ipv6 "$INTERFACE"
                 fi
                 ;;
             3)
                 INTERFACE=$(get_main_interface)
                 if [ $? -eq 0 ]; then
-                    show_current_ipv6 $INTERFACE
+                    show_current_ipv6 "$INTERFACE"
                 fi
                 ;;
             4)
                 test_proxy_connectivity
                 ;;
             0)
-                return
+                return 0
                 ;;
             *)
                 echo -e "${RED}无效的选择${NC}"
