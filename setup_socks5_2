@@ -283,6 +283,7 @@ show_current_ipv6() {
     echo "$ipv6_list"
 }
 
+#!/bin/bash:c:/Users/Administrator/Desktop/参考脚本修改后.sh:set_ip_strategy
 # IP策略配置模块
 set_ip_strategy() {
     echo "配置IP进出策略..."
@@ -325,14 +326,14 @@ set_ip_strategy() {
     read -p "请输入选项 [1-4]: " strategy
 
     # 创建配置目录和清空配置文件
-    mkdir -p /etc/xrayL
-    echo -n "" > /etc/xrayL/serve.toml
+    mkdir -p /etc/xray
+    echo -n "" > /etc/xray/serve.toml
 
     case $strategy in
         1)  # 同IP进同IP出
             echo -e "${YELLOW}策略1: 同IP进同IP出${NC}"
             for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xrayL/serve.toml
+                cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 listen = "$ipv4"
 port = $socks_port
@@ -374,7 +375,7 @@ EOF
             shuf "$outbound_pool_file" -o "$outbound_pool_file"
 
             for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xrayL/serve.toml
+                cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 listen = "$ipv4"
 port = $socks_port
@@ -391,7 +392,7 @@ EOF
             done
 
             # 定义出站标签为 balancer
-            cat <<EOF >> /etc/xrayL/serve.toml
+            cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 type = "balancer"
 tag = "balancer_out"
@@ -400,7 +401,7 @@ EOF
 
             # 添加所有IPv4出站到balancer
             for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xrayL/serve.toml
+                cat <<EOF >> /etc/xray/serve.toml
     {
         "protocol": "freedom",
         "settings": {
@@ -413,8 +414,8 @@ EOF
             done
 
             # 去除最后一个逗号并关闭数组
-            sed -i '$ s/,$//' /etc/xrayL/serve.toml
-            cat <<EOF >> /etc/xrayL/serve.toml
+            sed -i '$ s/,$//' /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.toml
 ]
 
 [[routing.rules]]
@@ -424,7 +425,7 @@ outboundTag = "balancer_out"
 
 EOF
             ;;
-
+    
         3)  # IPv4进随机IPv6出（不重复直到耗尽）
             echo -e "${YELLOW}策略3: IPv4进随机IPv6出（不重复直到耗尽）${NC}"
             # 检查是否有IPv6地址
@@ -443,7 +444,7 @@ EOF
             shuf "$outbound_pool_file" -o "$outbound_pool_file"
 
             for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xrayL/serve.toml
+                cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 listen = "$ipv4"
 port = $socks_port
@@ -460,7 +461,7 @@ EOF
             done
 
             # 定义出站标签为 balancer
-            cat <<EOF >> /etc/xrayL/serve.toml
+            cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 type = "balancer"
 tag = "balancer_out6"
@@ -469,7 +470,7 @@ EOF
 
             # 添加所有IPv6出站到balancer
             for ipv6 in "${ipv6_addrs[@]}"; do
-                cat <<EOF >> /etc/xrayL/serve.toml
+                cat <<EOF >> /etc/xray/serve.toml
     {
         "protocol": "freedom",
         "settings": {
@@ -482,8 +483,8 @@ EOF
             done
 
             # 去除最后一个逗号并关闭数组
-            sed -i '$ s/,$//' /etc/xrayL/serve.toml
-            cat <<EOF >> /etc/xrayL/serve.toml
+            sed -i '$ s/,$//' /etc/xray/serve.toml
+            cat <<EOF >> /etc/xray/serve.toml
 ]
 
 [[routing.rules]]
@@ -493,7 +494,7 @@ outboundTag = "balancer_out6"
 
 EOF
             ;;
-
+    
         4)  # IPv4进，不同端口对应固定IPv6出（自动分配）
             echo -e "${YELLOW}策略4: IPv4进，不同端口对应固定IPv6出（自动分配）${NC}"
             local ipv6_count=${#ipv6_addrs[@]}
@@ -531,7 +532,7 @@ EOF
                 current_ipv6=${ipv6_addrs[$i]}
 
                 for ipv4 in "${ipv4_addrs[@]}"; do
-                    cat <<EOF >> /etc/xrayL/serve.toml
+                    cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 listen = "$ipv4"
 port = $current_port
@@ -547,7 +548,7 @@ pass = "$socks_pass"
 EOF
                 done
 
-                cat <<EOF >> /etc/xrayL/serve.toml
+                cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
 tag = "out_${current_port}"
@@ -571,18 +572,18 @@ EOF
     esac
 
     # 检查配置文件
-    if ! /usr/local/bin/xrayL -test -config /etc/xrayL/serve.toml; then
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
         echo -e "${RED}Xray 配置验证失败${NC}"
         return 1
     fi
 
     # 重启 Xray 服务
-    systemctl restart xrayL.service
+    systemctl restart xray.service
     sleep 2
 
-    if ! systemctl is-active --quiet xrayL.service; then
+    if ! systemctl is-active --quiet xray.service; then
         echo -e "${RED}Xray 服务启动失败${NC}"
-        systemctl status xrayL.service
+        systemctl status xray.service
         return 1
     fi
 
