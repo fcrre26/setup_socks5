@@ -759,6 +759,33 @@ ipv6_manager_menu() {
     done
 }
 
+delete_all_ipv6() {
+    local interface=$1
+    echo "删除所有IPv6地址..."
+    
+    if [ -z "$interface" ]; then
+        echo -e "${RED}错误：未指定网络接口${NC}"
+        return 1
+    fi
+
+    # 保存原始IPv6地址（第一个全局地址）
+    local original_ipv6=$(ip -6 addr show dev "$interface" scope global | grep -v temporary | head -n1 | awk '{print $2}')
+    
+    # 删除所有IPv6地址
+    ip -6 addr flush dev "$interface" scope global
+    
+    # 如果有原始地址，恢复它
+    if [ -n "$original_ipv6" ]; then
+        echo "恢复原始IPv6地址: $original_ipv6"
+        ip -6 addr add "$original_ipv6" dev "$interface"
+    fi
+    
+    echo -e "${GREEN}已删除所有额外的IPv6地址${NC}"
+    return 0
+}
+
+
+
 # 主菜单
 show_menu() {
     echo -e "\n${YELLOW}=== 代理服务器管理工具 ===${NC}"
