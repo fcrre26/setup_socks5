@@ -423,12 +423,15 @@ balancerTag = "ipv6_balancer"
 EOF
             ;;
     
-        4)  # IPv4进，不同端口对应固定IPv6出
-            # 为每个端口配置入站和对应的IPv6出站
-            for port in "${!port_map[@]}"; do
-                ipv6=${port_map[$port]}
-                for ipv4 in "${ipv4_addrs[@]}"; do
-                    cat <<EOF >> /etc/xray/serve.toml
+       # IP策略配置模块中的第4种策略（IPv4进，不同端口对应固定IPv6出）部分
+
+4)  # IPv4进，不同端口对应固定IPv6出
+    # 为每个端口配置入站和对应的IPv6出站
+    for port in "${!port_map[@]}"; do
+        ipv6=${port_map[$port]}
+        # 为每个IPv4地址创建入站配置
+        for ipv4 in "${ipv4_addrs[@]}"; do
+            cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 listen = "$ipv4"
 port = $port
@@ -442,6 +445,11 @@ ip = "$ipv4"
 user = "$socks_user"
 pass = "$socks_pass"
 
+EOF
+        done
+
+        # 为每个端口创建对应的出站配置
+        cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
 tag = "out_${port}"
@@ -449,15 +457,20 @@ settings = { domainStrategy = "UseIPv6" }
 streamSettings = { sockopt = { mark = 255 } }
 sendThrough = "$ipv6"
 
+EOF
+
+        # 为每个入站添加对应的路由规则
+        for ipv4 in "${ipv4_addrs[@]}"; do
+            cat <<EOF >> /etc/xray/serve.toml
 [[routing.rules]]
 type = "field"
 inboundTag = ["in_${port}_${ipv4}"]
 outboundTag = "out_${port}"
 
 EOF
-                done
-            done
-            ;;
+        done
+    done
+    ;;
     esac
 
     # 检查配置文件
