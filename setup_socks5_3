@@ -326,7 +326,6 @@ outboundTag = "out_$ipv4"
 EOF
             done
             ;;
-        
         2)  # IPv4进随机IPv4出
             # 配置入站
             for ipv4 in "${ipv4_addrs[@]}"; do
@@ -365,7 +364,7 @@ EOF
 [[balancers]]
 tag = "ipv4_balancer"
 selector = ["out_${ipv4_addrs[*]// /", "out_}"]
-strategy = "random"
+strategy = "round-robin"
 
 [[routing.rules]]
 type = "field"
@@ -413,7 +412,7 @@ EOF
 [[balancers]]
 tag = "ipv6_balancer"
 selector = ["out_${ipv6_addrs[*]// /", "out_}"]
-strategy = "random"
+strategy = "round-robin"
 
 [[routing.rules]]
 type = "field"
@@ -422,7 +421,8 @@ balancerTag = "ipv6_balancer"
 
 EOF
             ;;
-    
+    esac
+   
         4)  # IPv4进，不同端口对应固定IPv6出
             # 为每个端口配置入站和对应的IPv6出站
             for port in "${!port_map[@]}"; do
