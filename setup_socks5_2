@@ -129,162 +129,329 @@ EOF
     return 0
 }
 
-# 环境配置模块
-setup_environment() {
-    echo "设置防火墙规则..."
-    iptables -P INPUT ACCEPT
-    iptables -P FORWARD ACCEPT
-    iptables -P OUTPUT ACCEPT
-    iptables -t nat -F
-    iptables -t mangle -F
-    iptables -F
-    iptables -X
-    iptables-save
+# SOCKS5配置模块
+set_socks5_credentials() {
+    # 检查 Xray 是否已安装
+    if ! [ -x "$(command -v xray)" ]; then
+        echo "Xray 未安装，请先运行环境配置（选项1）"
+        return 1
+    fi
 
-    install_xray
-    echo "创建Xray配置目录..."
+    read -p "请输入SOCKS5起始端口 (默认: $DEFAULT_START_PORT): " socks_port
+    socks_port=${socks_port:-$DEFAULT_START_PORT}
+    read -p "请输入用户名 (默认: $DEFAULT_SOCKS_USERNAME): " socks_user
+    socks_user=${socks_user:-$DEFAULT_SOCKS_USERNAME}
+    read -p "请输入密码 (默认: $DEFAULT_SOCKS_PASSWORD): " socks_pass
+    socks_pass=${socks_pass:-$DEFAULT_SOCKS_PASSWORD}
+
+    # 验证输入
+    if ! [[ "$socks_port" =~ ^[0-9]+$ ]] || [ "$socks_port" -lt 1 ] || [ "$socks_port" -gt 65535 ]; then
+        echo -e "${RED}无效的端口号${NC}"
+        return 1
+    fi
+
+    if [ -z "$socks_user" ] || [ -z "$socks_pass" ]; then
+        echo -e "${RED}用户名和密码不能为空${NC}"
+        return 1
+    fi
+
+    # 保存配置
     mkdir -p /etc/xray
+    echo "SOCKS_PORT=$socks_port" > /etc/xray/credentials
+    echo "SOCKS_USER=$socks_user" >> /etc/xray/credentials
+    echo "SOCKS_PASS=$socks_pass" >> /etc/xray/credentials
 
-    echo "启动Xray服务..."
-    systemctl daemon-reload
-    systemctl enable xray
-    systemctl start xray
-    echo "环境配置完成。"
+    # 设置IP策略
+    set_ip_strategy
+
+    echo "SOCKS5端口、用户名和密码设置完成。"
     return 0
 }
 
-# IPv6相关函数
-generate_random_hex() {
-    local length=$1
-    head -c $((length/2)) /dev/urandom | hexdump -ve '1/1 "%.2x"'
-}
+# IP策略配置模块
+set_ip_strategy() {
+    echo "配置IP进出策略..."
 
-get_main_interface() {
-    MAIN_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
-    if [ -z "$MAIN_INTERFACE" ]; then
-        echo -e "${RED}错误: 无法检测到主网卡${NC}"
-        return 1
-    fi
-    echo $MAIN_INTERFACE
-}
+    # 获取IPv4和IPv6地址
+    ipv4_addrs=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
+    ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
 
-get_ipv6_prefix() {
-    local interface=$1
-    local current_ipv6=$(ip -6 addr show dev $interface | grep "scope global" | grep -v "temporary" | head -n1 | awk '{print $2}')
-
-    if [ -z "$current_ipv6" ]; then
-        echo -e "${RED}错误: 未检测到IPv6地址${NC}" >&2
+    # 检查地址可用性
+    if [ ${#ipv4_addrs[@]} -eq 0 ]; then
+        echo -e "${RED}未检测到有效的IPv4地址${NC}"
         return 1
     fi
 
-    local ipv6_addr=$(echo "$current_ipv6" | cut -d'/' -f1)
-    local prefix=$(echo "$ipv6_addr" | sed -E 's/:[^:]+:[^:]+:[^:]+:[^:]+$/::/')
+    if [ ${#ipv6_addrs[@]} -eq 0 ]; then
+        echo -e "${YELLOW}未检测到IPv6地址，某些策略可能无法使用${NC}"
+    fi
 
-    if [ -z "$prefix" ]; then
-        echo -e "${RED}错误: 无法提取IPv6前缀${NC}" >&2
+    # 如果没有之前设置的信息，使用默认值
+    socks_port=${socks_port:-$DEFAULT_START_PORT}
+    socks_user=${socks_user:-$DEFAULT_SOCKS_USERNAME}
+    socks_pass=${socks_pass:-$DEFAULT_SOCKS_PASSWORD}
+
+    echo "当前IPv4地址: ${ipv4_addrs[@]}"
+    echo "当前IPv6地址: ${ipv6_addrs[@]}"
+
+    echo "请选择IP进出策略："
+    echo "1. 同IP进同IP出（默认）"
+    echo "2. IPv4进随机IPv4出（不重复直到耗尽）"
+    echo "3. IPv4进随机IPv6出（不重复直到耗尽）"
+    echo "4. IPv4进，不同端口对应固定IPv6出（自动分配）"
+    read -p "请输入选项 [1-4]: " strategy
+
+    # 创建配置目录和清空配置文件
+    mkdir -p /etc/xray
+    echo -n "" > /etc/xray/config.toml
+
+    # 根据不同策略生成配置内容
+    case $strategy in
+        1)  # 同IP进同IP出
+            echo -e "${YELLOW}策略1: 同IP进同IP出${NC}"
+            config_content=""
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                config_content+="[[inbounds]]\n"
+                config_content+="port = $socks_port\n"
+                config_content+="protocol = \"socks\"\n"
+                config_content+="tag = \"inbound_${ipv4}\"\n"
+                config_content+="[inbounds.settings]\n"
+                config_content+="auth = \"password\"\n"
+                config_content+="udp = true\n"
+                config_content+="ip = \"${ipv4}\"\n"
+                config_content+="[[inbounds.settings.accounts]]\n"
+                config_content+="user = \"$socks_user\"\n"
+                config_content+="pass = \"$socks_pass\"\n\n"
+
+                config_content+="[[outbounds]]\n"
+                config_content+="protocol = \"freedom\"\n"
+                config_content+="tag = \"outbound_${ipv4}\"\n"
+                config_content+="sendThrough = \"${ipv4}\"\n\n"
+
+                config_content+="[[routing.rules]]\n"
+                config_content+="type = \"field\"\n"
+                config_content+="inboundTag = [\"inbound_${ipv4}\"]\n"
+                config_content+="outboundTag = \"outbound_${ipv4}\"\n\n"
+
+                socks_port=$((socks_port + 1))
+            done
+            ;;
+
+        2)  # IPv4进随机IPv4出
+            echo -e "${YELLOW}策略2: IPv4进随机IPv4出${NC}"
+            config_content=""
+            
+            # 创建负载均衡组
+            config_content+="[[outbounds]]\n"
+            config_content+="protocol = \"freedom\"\n"
+            config_content+="tag = \"ipv4_random\"\n"
+            config_content+="settings = { domainStrategy = \"UseIPv4\" }\n\n"
+
+            # 为每个IPv4创建出站
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                config_content+="[[outbounds]]\n"
+                config_content+="protocol = \"freedom\"\n"
+                config_content+="tag = \"outbound_${ipv4}\"\n"
+                config_content+="sendThrough = \"${ipv4}\"\n\n"
+            done
+
+            # 创建入站
+            config_content+="[[inbounds]]\n"
+            config_content+="port = $socks_port\n"
+            config_content+="protocol = \"socks\"\n"
+            config_content+="tag = \"inbound_ipv4_random\"\n"
+            config_content+="[inbounds.settings]\n"
+            config_content+="auth = \"password\"\n"
+            config_content+="udp = true\n"
+            config_content+="[[inbounds.settings.accounts]]\n"
+            config_content+="user = \"$socks_user\"\n"
+            config_content+="pass = \"$socks_pass\"\n\n"
+
+            # 创建负载均衡规则
+            config_content+="[[routing.balancers]]\n"
+            config_content+="tag = \"ipv4_balancer\"\n"
+            config_content+="strategy = \"random\"\n"
+            config_content+="selector = ["
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                config_content+="\"outbound_${ipv4}\","
+            done
+            config_content="${config_content%,}]\n\n"
+
+            # 创建路由规则
+            config_content+="[[routing.rules]]\n"
+            config_content+="type = \"field\"\n"
+            config_content+="inboundTag = [\"inbound_ipv4_random\"]\n"
+            config_content+="balancerTag = \"ipv4_balancer\"\n\n"
+            ;;
+
+        3)  # IPv4进随机IPv6出
+            echo -e "${YELLOW}策略3: IPv4进随机IPv6出${NC}"
+            if [ ${#ipv6_addrs[@]} -eq 0 ]; then
+                echo -e "${RED}没有可用的IPv6地址${NC}"
+                return 1
+            fi
+
+            config_content=""
+            
+            # 创建负载均衡组
+            config_content+="[[outbounds]]\n"
+            config_content+="protocol = \"freedom\"\n"
+            config_content+="tag = \"ipv6_random\"\n"
+            config_content+="settings = { domainStrategy = \"UseIPv6\" }\n\n"
+
+            # 为每个IPv6创建出站
+            for ipv6 in "${ipv6_addrs[@]}"; do
+                config_content+="[[outbounds]]\n"
+                config_content+="protocol = \"freedom\"\n"
+                config_content+="tag = \"outbound_${ipv6//:/}\"\n"
+                config_content+="[outbounds.settings]\n"
+                config_content+="domainStrategy = \"UseIPv6\"\n"
+                config_content+="[outbounds.streamSettings]\n"
+                config_content+="[outbounds.streamSettings.sockopt]\n"
+                config_content+="bindAddress = \"$ipv6\"\n\n"
+            done
+            # 创建入站
+            config_content+="[[inbounds]]\n"
+            config_content+="port = $socks_port\n"
+            config_content+="protocol = \"socks\"\n"
+            config_content+="tag = \"inbound_ipv6_random\"\n"
+            config_content+="[inbounds.settings]\n"
+            config_content+="auth = \"password\"\n"
+            config_content+="udp = true\n"
+            config_content+="[[inbounds.settings.accounts]]\n"
+            config_content+="user = \"$socks_user\"\n"
+            config_content+="pass = \"$socks_pass\"\n\n"
+
+            # 创建负载均衡规则
+            config_content+="[[routing.balancers]]\n"
+            config_content+="tag = \"ipv6_balancer\"\n"
+            config_content+="strategy = \"random\"\n"
+            config_content+="selector = ["
+            for ipv6 in "${ipv6_addrs[@]}"; do
+                config_content+="\"outbound_${ipv6//:/}\","
+            done
+            config_content="${config_content%,}]\n\n"
+
+            # 创建路由规则
+            config_content+="[[routing.rules]]\n"
+            config_content+="type = \"field\"\n"
+            config_content+="inboundTag = [\"inbound_ipv6_random\"]\n"
+            config_content+="balancerTag = \"ipv6_balancer\"\n\n"
+            ;;
+
+        4)  # IPv4进不同端口对应固定IPv6出
+            echo -e "${YELLOW}策略4: IPv4进不同端口对应固定IPv6出${NC}"
+            local ipv6_count=${#ipv6_addrs[@]}
+            
+            if [ $ipv6_count -eq 0 ]; then
+                echo -e "${RED}没有可用的IPv6地址${NC}"
+                return 1
+            fi
+
+            read -p "请输入要配置的端口数量 (最大 $ipv6_count): " port_count
+            if ! [[ "$port_count" =~ ^[0-9]+$ ]] || [ "$port_count" -lt 1 ] || [ "$port_count" -gt "$ipv6_count" ]; then
+                echo -e "${RED}无效的端口数量${NC}"
+                return 1
+            fi
+
+            config_content=""
+            for ((i=0; i<port_count; i++)); do
+                current_port=$((socks_port + i))
+                current_ipv6=${ipv6_addrs[$i]}
+                
+                config_content+="[[inbounds]]\n"
+                config_content+="port = $current_port\n"
+                config_content+="protocol = \"socks\"\n"
+                config_content+="tag = \"inbound_port_${current_port}\"\n"
+                config_content+="[inbounds.settings]\n"
+                config_content+="auth = \"password\"\n"
+                config_content+="udp = true\n"
+                config_content+="[[inbounds.settings.accounts]]\n"
+                config_content+="user = \"$socks_user\"\n"
+                config_content+="pass = \"$socks_pass\"\n\n"
+
+                config_content+="[[outbounds]]\n"
+                config_content+="protocol = \"freedom\"\n"
+                config_content+="tag = \"outbound_port_${current_port}\"\n"
+                config_content+="[outbounds.settings]\n"
+                config_content+="domainStrategy = \"UseIPv6\"\n"
+                config_content+="[outbounds.streamSettings]\n"
+                config_content+="[outbounds.streamSettings.sockopt]\n"
+                config_content+="bindAddress = \"$current_ipv6\"\n\n"
+
+                config_content+="[[routing.rules]]\n"
+                config_content+="type = \"field\"\n"
+                config_content+="inboundTag = [\"inbound_port_${current_port}\"]\n"
+                config_content+="outboundTag = \"outbound_port_${current_port}\"\n\n"
+            done
+            ;;
+        *)
+            echo -e "${RED}无效的策略选择${NC}"
+            return 1
+            ;;
+    esac
+
+    # 写入配置文件
+    echo -e "$config_content" > /etc/xray/config.toml
+
+    # 重启服务
+    systemctl restart xray.service
+    sleep 2
+
+    if ! systemctl is-active --quiet xray.service; then
+        echo -e "${RED}Xray 服务启动失败${NC}"
+        systemctl status xray.service
         return 1
     fi
 
-    echo "$prefix"
+    # 生成代理列表
+    echo -e "\n# 策略配置信息" > /root/proxy_list.txt
+    case $strategy in
+        1)
+            echo -e "# 策略：同IP进同IP出\n" >> /root/proxy_list.txt
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                echo "$ipv4:$socks_port:$socks_user:$socks_pass # 出口: $ipv4" >> /root/proxy_list.txt
+                socks_port=$((socks_port + 1))
+            done
+            ;;
+        2)
+            echo -e "# 策略：IPv4进随机IPv4出\n" >> /root/proxy_list.txt
+            echo -e "# 可能的出口IP: ${ipv4_addrs[*]}\n" >> /root/proxy_list.txt
+            echo "$ipv4_addrs:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
+            ;;
+        3)
+            echo -e "# 策略：IPv4进随机IPv6出\n" >> /root/proxy_list.txt
+            echo -e "# 可能的出口IP: ${ipv6_addrs[*]}\n" >> /root/proxy_list.txt
+            echo "$ipv4_addrs:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
+            ;;
+        4)
+            echo -e "# 策略：IPv4进不同端口对应固定IPv6出\n" >> /root/proxy_list.txt
+            for ((i=0; i<port_count; i++)); do
+                current_port=$((socks_port + i))
+                current_ipv6=${ipv6_addrs[$i]}
+                echo -e "\n# 端口 $current_port 对应的IPv6出口: $current_ipv6" >> /root/proxy_list.txt
+                for ipv4 in "${ipv4_addrs[@]}"; do
+                    echo "$ipv4:$current_port:$socks_user:$socks_pass # 出口: $current_ipv6" >> /root/proxy_list.txt
+                done
+            done
+            ;;
+    esac
+
+    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
+    return 0
 }
 
-add_ipv6_addresses() {
-    local interface=$1
-    local prefix=$2
-    local num=$3
-
-    echo -e "${YELLOW}准备添加IPv6地址:${NC}"
-    echo "使用网络接口: $interface"
-    echo "使用IPv6前缀: $prefix"
-    echo "计划添加数量: $num"
-
-    declare -A existing_addresses
-    while read -r addr; do
-        existing_addresses["$addr"]=1
-    done < <(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}' | cut -d'/' -f1)
-
-    echo -e "\n${YELLOW}当前IPv6地址:${NC}"
-    ip -6 addr show dev $interface
-
-    count=0
-    attempts=0
-    max_attempts=$((num * 3))
-
-    while [ $count -lt $num ] && [ $attempts -lt $max_attempts ]; do
-        ((attempts++))
-
-        suffix=$(printf "%04x:%04x:%04x:%04x" \
-            $((RANDOM % 65536)) \
-            $((RANDOM % 65536)) \
-            $((RANDOM % 65536)) \
-            $((RANDOM % 65536)))
-
-        NEW_IPV6="${prefix%::}:${suffix}"
-
-        if [ "${existing_addresses[$NEW_IPV6]}" == "1" ]; then
-            echo -e "${YELLOW}地址已存在，重新生成: $NEW_IPV6${NC}"
-            continue
-        fi
-
-        echo -e "\n${YELLOW}尝试添加新地址: $NEW_IPV6${NC}"
-        if ip -6 addr add "$NEW_IPV6/64" dev "$interface" 2>/dev/null; then
-            echo -e "${GREEN}成功添加IPv6地址: $NEW_IPV6${NC}"
-            existing_addresses["$NEW_IPV6"]=1
-            ((count++))
-
-            mkdir -p /etc/network/interfaces.d
-            echo "iface $interface inet6 static" >> /etc/network/interfaces.d/60-ipv6-addresses
-            echo "    address $NEW_IPV6/64" >> /etc/network/interfaces.d/60-ipv6-addresses
-            echo "" >> /etc/network/interfaces.d/60-ipv6-addresses
-        else
-            echo -e "${RED}添加地址失败: $NEW_IPV6${NC}"
-        fi
-    done
-
-    if [ $count -lt $num ]; then
-        echo -e "${RED}警告: 只成功添加了 $count 个地址（目标: $num）${NC}"
-    fi
-
-    echo -e "\n${YELLOW}更新后的IPv6地址:${NC}"
-    ip -6 addr show dev $interface
-
-    if [ ! -f "/etc/network/interfaces" ]; then
-        echo "auto lo" > /etc/network/interfaces
-        echo "iface lo inet loopback" >> /etc/network/interfaces
-        echo "" >> /etc/network/interfaces
-    fi
-
-    if ! grep -q "source /etc/network/interfaces.d/*" /etc/network/interfaces; then
-        echo "source /etc/network/interfaces.d/*" >> /etc/network/interfaces
-    fi
+# 工具函数
+get_active_interfaces() {
+    interfaces=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2}')
+    echo "检测到的活动网络接口: $interfaces"
+    return 0
 }
 
-delete_all_ipv6() {
-    local interface=$1
-
-    CONFIG_FILE="/etc/network/interfaces.d/60-ipv6-addresses"
-    if [ -f "$CONFIG_FILE" ]; then
-        rm -f "$CONFIG_FILE"
-        echo -e "${GREEN}已删除配置文件${NC}"
-    fi
-
-    for addr in $(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}'); do
-        ip -6 addr del $addr dev $interface
-        echo -e "${YELLOW}已删除IPv6地址: $addr${NC}"
-    done
-
-    echo -e "${GREEN}所有配置的IPv6地址已删除${NC}"
-}
-
-show_current_ipv6() {
-    local interface=$1
-    echo -e "${YELLOW}当前IPv6地址列表：${NC}"
-    local ipv6_list=$(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80")
-    if [ -z "$ipv6_list" ]; then
-        echo -e "${RED}未检测到任何IPv6地址${NC}"
-        return 1
-    fi
-    echo "$ipv6_list"
+get_active_ip_count() {
+    active_ip_count=$(hostname -I | wc -w)
+    echo "当前活动的IP数量: $active_ip_count"
+    return 0
 }
 
 # 带宽控制和BBR相关函数
@@ -343,6 +510,64 @@ enable_bbr() {
     return 0
 }
 
+# 测试代理连通性
+test_proxy_connectivity() {
+    echo "测试代理连通性..."
+
+    if [ ! -f /root/proxy_list.txt ]; then
+        echo -e "${RED}/root/proxy_list.txt 文件不存在。${NC}"
+        return 1
+    fi
+
+    while IFS= read -r line; do
+        if [[ $line =~ ^(.+):([0-9]+):(.+):(.+)$ ]]; then
+            ip="${BASH_REMATCH[1]}"
+            port="${BASH_REMATCH[2]}"
+            user="${BASH_REMATCH[3]}"
+            pass="${BASH_REMATCH[4]}"
+
+            echo "正在测试 $ip:$port..."
+
+            if [[ $ip == *:* ]]; then
+                ip="[$ip]"
+            fi
+
+            if curl -s --proxy socks5h://$user:$pass@$ip:$port http://httpbin.org/ip -o /dev/null; then
+                echo -e "${GREEN}$ip:$port 代理连接成功${NC}"
+            else
+                echo -e "${RED}$ip:$port 代理连接失败${NC}"
+            fi
+        else
+            echo -e "${RED}行格式不正确: $line${NC}"
+        fi
+    done < /root/proxy_list.txt
+
+    echo "代理连通性测试完成。"
+    return 0
+}
+
+# 清理函数
+clear_proxy_rules() {
+    echo "清除所有代理规则..."
+    $service_manager stop xray
+    $service_manager disable xray
+    rm -f /etc/xray/serve.toml
+    rm -f /etc/systemd/system/xray.service
+    iptables -F
+    iptables -X
+    iptables -t nat -F
+    iptables -t mangle -F
+    ip6tables -F
+    ip6tables -X
+    ip6tables -t nat -F
+    ip6tables -t mangle -F
+    iptables-save
+    ip6tables-save
+    rm -f /root/proxy_list.txt
+    echo "已清除所有代理规则，回到未安装SOCKS5代理的状态。"
+    return 0
+}
+
 # IPv6管理菜单
 ipv6_manager_menu() {
     while true; do
@@ -363,11 +588,15 @@ ipv6_manager_menu() {
                     continue
                 fi
 
+                # 先显示当前IPv6信息
                 echo -e "${YELLOW}当前IPv6配置：${NC}"
                 ip -6 addr show dev $INTERFACE
 
-                PREFIX=$(get_ipv6_prefix $INTERFACE)
-                if [ $? -ne 0 ]; then
+                # 获取IPv6前缀
+                PREFIX=$(ip -6 addr show dev $INTERFACE | grep "scope global" | grep -v "temporary" | head -n1 | awk '{print $2}' | cut -d'/' -f1 | sed -E 's/:[^:]+:[^:]+:[^:]+:[^:]+$/::/')
+
+                if [ -z "$PREFIX" ]; then
+                    echo -e "${RED}无法获取IPv6前缀${NC}"
                     continue
                 fi
 
@@ -409,59 +638,78 @@ ipv6_manager_menu() {
     done
 }
 
-# 测试代理连通性
-test_proxy_connectivity() {
-    echo "测试代理连通性..."
+# 主菜单
+show_menu() {
+    echo -e "\n${YELLOW}=== 代理服务器管理工具 ===${NC}"
+    echo "1. 环境配置（安装必要组件）"
+    echo "2. 启用BBR加速"
+    echo "3. IPv6地址管理"
+    echo "4. 设置带宽控制"
+    echo "5. SOCKS5代理设置"
+    echo "6. 设置IP进出策略"
+    echo "7. 测试代理连通性"
+    echo "8. 显示代理列表"
+    echo "9. 清除所有代理规则"
+    echo "10. 退出"
 
-    if [ ! -f /root/proxy_list.txt ]; then
-        echo -e "${RED}/root/proxy_list.txt 文件不存在。${NC}"
-        return 1
-    fi
-
-    local strategy_type=$(grep "^# 策略：" /root/proxy_list.txt | cut -d "：" -f 2)
-    echo -e "${YELLOW}当前策略: $strategy_type${NC}\n"
-
-    while IFS= read -r line; do
-        [[ $line =~ ^#.*$ ]] || [[ -z $line ]] && continue
-
-        if [[ $line =~ ^([^:]+):([0-9]+):([^:]+):([^:]+) ]]; then
-            local ip="${BASH_REMATCH[1]}"
-            local port="${BASH_REMATCH[2]}"
-            local user="${BASH_REMATCH[3]}"
-            local pass="${BASH_REMATCH[4]}"
-
-            echo -e "${YELLOW}测试 $ip:$port...${NC}"
-
-            if [[ $ip =~ ":" ]]; then
-                ip="[$ip]"
+    read -p "请输入选项 [1-10]: " option
+    case $option in
+        1) 
+            setup_environment
+            ;;
+        2) 
+            enable_bbr 
+            ;;
+        3) 
+            ipv6_manager_menu 
+            ;;
+        4) 
+            setup_bandwidth_control 
+            ;;
+        5) 
+            if ! [ -x "$(command -v xray)" ]; then
+                echo -e "${RED}请先运行环境配置（选项1）安装 Xray${NC}"
+                return 1
             fi
-
-            if curl -s --max-time 10 --proxy socks5h://$user:$pass@$ip:$port http://api.ipify.org -o /dev/null; then
-                echo -e "${GREEN}✓ $ip:$port 连接成功${NC}"
-                local exit_ip=$(curl -s --max-time 10 --proxy socks5h://$user:$pass@$ip:$port http://api.ipify.org)
-                echo -e "${GREEN}  出口IP: $exit_ip${NC}"
+            set_socks5_credentials 
+            ;;
+        6) 
+            if ! [ -x "$(command -v xray)" ]; then
+                echo -e "${RED}请先运行环境配置（选项1）安装 Xray${NC}"
+                return 1
+            fi
+            set_ip_strategy 
+            ;;
+        7) 
+            test_proxy_connectivity 
+            ;;
+        8) 
+            if [ -f /root/proxy_list.txt ]; then
+                echo -e "\n${YELLOW}当前代理配置：${NC}"
+                cat /root/proxy_list.txt
             else
-                echo -e "${RED}✗ $ip:$port 连接失败${NC}"
+                echo -e "${RED}/root/proxy_list.txt 文件不存在${NC}"
             fi
-            echo ""
-        fi
-    done < /root/proxy_list.txt
+            ;;
+        9) 
+            echo -e "${YELLOW}正在清除所有代理规则...${NC}"
+            systemctl stop xray
+            rm -f /etc/xray/config.toml
+            rm -f /root/proxy_list.txt
+            echo -e "${GREEN}所有代理规则已清除${NC}"
+            ;;
+        10) 
+            echo -e "${GREEN}退出脚本${NC}"
+            exit 0 
+            ;;
+        *) 
+            echo -e "${RED}无效选项，请输入1-10之间的数字${NC}" 
+            ;;
+    esac
 
-    echo -e "${GREEN}代理连通性测试完成。${NC}"
-    return 0
-}
-
-# 工具函数
-get_active_interfaces() {
-    interfaces=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2}')
-    echo "检测到的活动网络接口: $interfaces"
-    return 0
-}
-
-get_active_ip_count() {
-    active_ip_count=$(hostname -I | wc -w)
-    echo "当前活动的IP数量: $active_ip_count"
-    return 0
+    # 暂停以便查看输出
+    echo -e "\n按回车键继续..."
+    read
 }
 
 # 主程序
@@ -479,6 +727,7 @@ main() {
 
     check_and_install_iptables
     check_ipv6
+
     show_usage
 
     while true; do
