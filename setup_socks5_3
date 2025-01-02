@@ -297,7 +297,35 @@ configure_ip_strategy() {
 
     case $strategy in
         1)  # 同IP进同IP出
-            # ... 保持原样 ...
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+listen = "$ipv4"
+port = $socks_port
+protocol = "socks"
+tag = "in_$ipv4"
+[inbounds.settings]
+auth = "password"
+udp = true
+ip = "$ipv4"
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+[[outbounds]]
+protocol = "freedom"
+tag = "out_$ipv4"
+settings = { domainStrategy = "UseIPv4" }
+streamSettings = { sockopt = { mark = 255 } }
+sendThrough = "$ipv4"
+
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_$ipv4"]
+outboundTag = "out_$ipv4"
+
+EOF
+            done
             ;;
         
         2)  # IPv4进随机IPv4出
@@ -409,7 +437,39 @@ EOF
             ;;
     
         4)  # IPv4进，不同端口对应固定IPv6出
-            # ... 保持原样 ...
+            # 为每个端口配置入站和对应的IPv6出站
+            for port in "${!port_map[@]}"; do
+                ipv6=${port_map[$port]}
+                for ipv4 in "${ipv4_addrs[@]}"; do
+                    cat <<EOF >> /etc/xray/serve.toml
+[[inbounds]]
+listen = "$ipv4"
+port = $port
+protocol = "socks"
+tag = "in_${port}_${ipv4}"
+[inbounds.settings]
+auth = "password"
+udp = true
+ip = "$ipv4"
+[[inbounds.settings.accounts]]
+user = "$socks_user"
+pass = "$socks_pass"
+
+[[outbounds]]
+protocol = "freedom"
+tag = "out_${port}"
+settings = { domainStrategy = "UseIPv6" }
+streamSettings = { sockopt = { mark = 255 } }
+sendThrough = "$ipv6"
+
+[[routing.rules]]
+type = "field"
+inboundTag = ["in_${port}_${ipv4}"]
+outboundTag = "out_${port}"
+
+EOF
+                done
+            done
             ;;
     esac
 
@@ -432,7 +492,6 @@ EOF
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
     return 0
 }
-
 
 set_ip_strategy() {
     echo "配置IP进出策略..."
