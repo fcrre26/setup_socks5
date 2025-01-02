@@ -591,6 +591,8 @@ EOF
 
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
     ;;   
+    esac
+}
 
 #配置IP进出策略
 set_ip_strategy() {
