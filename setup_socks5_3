@@ -382,10 +382,10 @@ EOF
             done
             ;;
     
-        3)  # IPv4进随机IPv6出
-            # 首先写入所有入站配置
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
+3)  # IPv4进随机IPv6出
+    # 首先写入所有入站配置
+    for ipv4 in "${ipv4_addrs[@]}"; do
+        cat <<EOF >> /etc/xray/serve.toml
 [[inbounds]]
 listen = "$ipv4"
 port = $socks_port
@@ -400,41 +400,46 @@ user = "$socks_user"
 pass = "$socks_pass"
 
 EOF
-            done
+    done
 
-            # 然后写入所有出站配置
-            for ipv6 in "${ipv6_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
+    # 创建出站标签数组
+    outbound_tags=()
+    
+    # 然后写入所有出站配置
+    for ipv6 in "${ipv6_addrs[@]}"; do
+        # 创建一个安全的标签（替换冒号为下划线）
+        tag="out_$(echo $ipv6 | tr ':' '_')"
+        outbound_tags+=("$tag")
+        
+        cat <<EOF >> /etc/xray/serve.toml
 [[outbounds]]
 protocol = "freedom"
-tag = "out_$ipv6"
+tag = "$tag"
 settings = { domainStrategy = "UseIPv6" }
 streamSettings = { sockopt = { mark = 255 } }
 sendThrough = "$ipv6"
 
 EOF
-            done
+    done
 
-            # 添加负载均衡器配置
-            cat <<EOF >> /etc/xray/serve.toml
+    # 添加负载均衡器配置，使用处理过的标签
+    cat <<EOF >> /etc/xray/serve.toml
 [[balancers]]
 tag = "ipv6_balancer"
-selector = [$(printf '"out_%s", ' "${ipv6_addrs[@]}" | sed 's/, $//')]
+selector = [$(printf '"%s", ' "${outbound_tags[@]}" | sed 's/, $//' )]
 strategy = "random"
 
 EOF
 
-            # 为每个入站添加到负载均衡器的路由规则
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.toml
+    # 添加路由规则
+    cat <<EOF >> /etc/xray/serve.toml
 [[routing.rules]]
 type = "field"
-inboundTag = ["in_$ipv4"]
+network = "tcp,udp"
 balancerTag = "ipv6_balancer"
 
 EOF
-            done
-            ;;
+    ;;
     
         4)  # IPv4进，不同端口对应固定IPv6出
             # 为每个端口配置入站和对应的IPv6出站
