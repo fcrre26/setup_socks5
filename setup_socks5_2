@@ -78,6 +78,42 @@ check_and_install_iptables() {
     return 0
 }
 
+# 环境配置模块
+setup_environment() {
+    echo "开始环境配置..."
+
+    # 更新系统包
+    if [ "$ID" == "centos" ]; then
+        yum update -y
+        yum install -y wget curl bc iptables-services
+    else
+        apt-get update
+        apt-get install -y wget curl bc iptables-persistent
+    fi
+
+    # 安装必要组件
+    check_and_install_unzip
+    check_and_install_iptables
+
+    # 安装 Xray
+    if ! [ -x "$(command -v xray)" ]; then
+        install_xray
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Xray 安装失败${NC}"
+            return 1
+        fi
+    else
+        echo "Xray 已安装"
+    fi
+
+    # 创建必要的目录
+    mkdir -p /etc/xray
+
+    echo -e "${GREEN}环境配置完成${NC}"
+    return 0
+}
+
+
 # 系统检查模块
 check_ipv6() {
     if ! sysctl -a 2>/dev/null | grep -q "net.ipv6.conf.all.disable_ipv6 = 0"; then
