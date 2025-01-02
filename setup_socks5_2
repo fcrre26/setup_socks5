@@ -457,18 +457,18 @@ EOF
     esac
 
     # 检查配置文件
-    if ! /usr/local/bin/xrayL -test -config /etc/xray/serve.toml; then
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve.toml; then
         echo -e "${RED}Xray 配置验证失败${NC}"
         return 1
     fi
 
     # 重启 Xray 服务
-    systemctl restart xrayL
+    systemctl restart xray
     sleep 2
 
-    if ! systemctl is-active --quiet xrayL; then
+    if ! systemctl is-active --quiet xray; then
         echo -e "${RED}Xray 服务启动失败${NC}"
-        systemctl status xrayL
+        systemctl status xray
         return 1
     fi
 
