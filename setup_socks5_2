@@ -588,7 +588,7 @@ set_socks5_credentials() {
     if ! [ -x "$(command -v xrayL)" ]; then
         echo "XrayL 未安装，请先运行环境配置（选项1）"
         return 1
-    }
+    fi
 
     read -p "请输入SOCKS5起始端口: " socks_port
     read -p "请输入用户名: " socks_user
