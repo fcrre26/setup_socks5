@@ -628,22 +628,21 @@ generate_proxy_list() {
                 echo "$ipv4:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
             done
             ;;
-        
         4)  # IPv4进不同端口对应固定IPv6出
-            echo -e "# 策略：IPv4进不同端口对应固定IPv6出\n" >> /root/proxy_list.txt
-            
-            # 遍历每个端口
-            for ((i=0; i<port_count; i++)); do
-                current_port=$((socks_port + i))
-                current_ipv6=${ipv6_addrs[$i]}
-                
-                echo -e "\n# 端口 $current_port 对应的IPv6出口: $current_ipv6" >> /root/proxy_list.txt
-                
-                # 为每个IPv4地址生成代理条目
-                for ipv4 in "${ipv4_addrs[@]}"; do
-                    echo "$ipv4:$current_port:$socks_user:$socks_pass # 出口: $current_ipv6" >> /root/proxy_list.txt
-                done
-            done
+    echo -e "# 策略：IPv4进不同端口对应固定IPv6出\n" >> /root/proxy_list.txt
+    
+    # 遍历每个端口
+    for ((i=0; i<port_count; i++)); do
+        current_port=$((socks_port + i))
+        current_ipv6=${ipv6_addrs[$i]}
+        
+        echo -e "\n# 端口 $current_port 对应的IPv6出口: $current_ipv6" >> /root/proxy_list.txt
+        
+        # 为每个IPv4地址生成代理条目
+        for ipv4 in "${ipv4_addrs[@]}"; do
+            echo "$ipv4:$current_port:$socks_user:$socks_pass # 出口: $current_ipv6" >> /root/proxy_list.txt
+        done
+    done
             ;;
     esac
 
