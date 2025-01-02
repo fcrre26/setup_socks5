@@ -624,61 +624,82 @@ get_main_interface() {
 add_ipv6_addresses() {
     local interface=$1
     local prefix=$2
-    local count=$3
-    local added=0
+    local num=$3
 
-    echo "正在添加IPv6地址..."
-    
-    # 检查是否有权限修改网络配置
-    if ! ip -6 addr show dev "$interface" > /dev/null 2>&1; then
-        echo -e "${RED}错误：没有足够的权限操作网络接口${NC}"
-        return 1
-    fi
+    echo -e "${YELLOW}准备添加IPv6地址:${NC}"
+    echo "使用网络接口: $interface"
+    echo "使用IPv6前缀: $prefix"
+    echo "计划添加数量: $num"
 
-    # 检查IPv6是否启用
-    if [ ! -f "/proc/sys/net/ipv6/conf/$interface/disable_ipv6" ] || [ "$(cat /proc/sys/net/ipv6/conf/$interface/disable_ipv6)" != "0" ]; then
-        echo -e "${RED}错误：IPv6未在接口 $interface 上启用${NC}"
-        return 1
-    fi
+    # 获取现有地址列表
+    declare -A existing_addresses
+    while read -r addr; do
+        existing_addresses["$addr"]=1
+    done < <(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}' | cut -d'/' -f1)
 
-    # 确保系统允许添加多个IPv6地址
-    sysctl -w net.ipv6.conf.all.accept_ra=2 > /dev/null 2>&1
-    sysctl -w net.ipv6.conf."$interface".accept_ra=2 > /dev/null 2>&1
-    
-    for ((i=1; i<=count; i++)); do
-        # 生成更短的后缀（使用16个字符而不是32个）
-        local suffix=$(generate_random_hex 16)
-        local ipv6_addr="${prefix}${suffix}"
-        
-        echo "尝试添加IPv6地址: ${ipv6_addr}"
-        
-        # 使用ip命令添加地址，并增加重试机制
-        for retry in {1..3}; do
-            if ip -6 addr add "${ipv6_addr}/64" dev "$interface" 2>/dev/null; then
-                echo -e "${GREEN}成功添加IPv6地址: ${ipv6_addr}${NC}"
-                ((added++))
-                break
-            else
-                echo -e "${YELLOW}第 $retry 次尝试添加地址失败，等待重试...${NC}"
-                sleep 1
-            fi
-        done
+    # 显示当前地址
+    echo -e "\n${YELLOW}当前IPv6地址:${NC}"
+    ip -6 addr show dev $interface
+
+    count=0
+    attempts=0
+    max_attempts=$((num * 3))  # 设置最大尝试次数
+
+    while [ $count -lt $num ] && [ $attempts -lt $max_attempts ]; do
+        ((attempts++))
+
+        # 生成后四组十六进制数
+        suffix=$(printf "%04x:%04x:%04x:%04x" \
+            $((RANDOM % 65536)) \
+            $((RANDOM % 65536)) \
+            $((RANDOM % 65536)) \
+            $((RANDOM % 65536)))
+
+        # 构建完整的IPv6地址
+        NEW_IPV6="${prefix%::}:${suffix}"
+
+        # 检查是否已存在
+        if [ "${existing_addresses[$NEW_IPV6]}" == "1" ]; then
+            echo -e "${YELLOW}地址已存在，重新生成: $NEW_IPV6${NC}"
+            continue
+        fi
+
+        echo -e "\n${YELLOW}尝试添加新地址: $NEW_IPV6${NC}"
+        if ip -6 addr add "$NEW_IPV6/64" dev "$interface" 2>/dev/null; then
+            echo -e "${GREEN}成功添加IPv6地址: $NEW_IPV6${NC}"
+            existing_addresses["$NEW_IPV6"]=1
+            ((count++))
+
+            # 创建持久化配置
+            mkdir -p /etc/network/interfaces.d
+            echo "iface $interface inet6 static" >> /etc/network/interfaces.d/60-ipv6-addresses
+            echo "    address $NEW_IPV6/64" >> /etc/network/interfaces.d/60-ipv6-addresses
+            echo "" >> /etc/network/interfaces.d/60-ipv6-addresses
+        else
+            echo -e "${RED}添加地址失败: $NEW_IPV6${NC}"
+        fi
     done
 
-    if [ "$added" -eq 0 ]; then
-        echo -e "${RED}警告：没有成功添加任何IPv6地址${NC}"
-        echo "请检查以下几点："
-        echo "1. 是否有root权限"
-        echo "2. 网络接口是否正确配置"
-        echo "3. IPv6是否正确启用"
-        echo "4. 系统是否允许添加额外的IPv6地址"
-        return 1
+    if [ $count -lt $num ]; then
+        echo -e "${RED}警告: 只成功添加了 $count 个地址（目标: $num）${NC}"
     fi
 
-    echo -e "${GREEN}成功添加 $added 个IPv6地址${NC}"
-    return 0
-}
+    # 显示最终结果
+    echo -e "\n${YELLOW}更新后的IPv6地址:${NC}"
+    ip -6 addr show dev $interface
 
+    # 确保配置文件存在
+    if [ ! -f "/etc/network/interfaces" ]; then
+        echo "auto lo" > /etc/network/interfaces
+        echo "iface lo inet loopback" >> /etc/network/interfaces
+        echo "" >> /etc/network/interfaces
+    fi
+
+    # 添加 source 指令（如果不存在）
+    if ! grep -q "source /etc/network/interfaces.d/*" /etc/network/interfaces; then
+        echo "source /etc/network/interfaces.d/*" >> /etc/network/interfaces
+    fi
+}
 show_current_ipv6() {
     local interface=$1
     echo -e "${YELLOW}当前IPv6地址列表：${NC}"
