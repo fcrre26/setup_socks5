@@ -477,23 +477,24 @@ EOF
     ;;
     
 4)  # IPv4进，不同端口对应固定IPv6出
-            # 首先创建配置文件并写入开头
-            cat <<EOF > /etc/xray/serve.json
+    # 首先创建配置文件头部
+    cat <<EOF > /etc/xray/serve.json
 {
     "inbounds": [
 EOF
 
-            # 为每个端口配置入站
-            first=true
-            for port in "${!port_map[@]}"; do
-                ipv6=${port_map[$port]}
-                for ipv4 in "${ipv4_addrs[@]}"; do
-                    if [ "$first" = true ]; then
-                        first=false
-                    else
-                        echo "," >> /etc/xray/serve.json
-                    fi
-                    cat <<EOF >> /etc/xray/serve.json
+    # 为每个端口配置入站
+    first_inbound=true
+    for port in "${!port_map[@]}"; do
+        ipv6=${port_map[$port]}
+        for ipv4 in "${ipv4_addrs[@]}"; do
+            if [ "$first_inbound" = true ]; then
+                first_inbound=false
+            else
+                echo "        ," >> /etc/xray/serve.json
+            fi
+            
+            cat <<EOF >> /etc/xray/serve.json
         {
             "listen": "$ipv4",
             "port": $port,
@@ -510,23 +511,26 @@ EOF
             }
         }
 EOF
-                done
-            done
+        done
+    done
 
-            # 添加出站配置
-            echo '],' >> /etc/xray/serve.json
-            echo '"outbounds": [' >> /etc/xray/serve.json
+    # 添加出站配置
+    cat <<EOF >> /etc/xray/serve.json
+    ],
+    "outbounds": [
+EOF
 
-            # 为每个端口配置出站
-            first=true
-            for port in "${!port_map[@]}"; do
-                ipv6=${port_map[$port]}
-                if [ "$first" = true ]; then
-                    first=false
-                else
-                    echo "," >> /etc/xray/serve.json
-                fi
-                cat <<EOF >> /etc/xray/serve.json
+    # 为每个端口配置出站
+    first_outbound=true
+    for port in "${!port_map[@]}"; do
+        ipv6=${port_map[$port]}
+        if [ "$first_outbound" = true ]; then
+            first_outbound=false
+        else
+            echo "        ," >> /etc/xray/serve.json
+        fi
+        
+        cat <<EOF >> /etc/xray/serve.json
         {
             "protocol": "freedom",
             "tag": "out_${port}",
@@ -535,40 +539,42 @@ EOF
             "sendThrough": "$ipv6"
         }
 EOF
-            done
+    done
 
-            # 添加路由规则
-            echo '],' >> /etc/xray/serve.json
-            echo '"routing": {' >> /etc/xray/serve.json
-            echo '    "rules": [' >> /etc/xray/serve.json
-
-            # 为每个入站配置路由规则
-            first=true
-            for port in "${!port_map[@]}"; do
-                for ipv4 in "${ipv4_addrs[@]}"; do
-                    if [ "$first" = true ]; then
-                        first=false
-                    else
-                        echo "," >> /etc/xray/serve.json
-                    fi
-                    cat <<EOF >> /etc/xray/serve.json
-        {
-            "type": "field",
-            "inboundTag": ["in_${port}_${ipv4}"],
-            "outboundTag": "out_${port}"
-        }
+    # 添加路由规则
+    cat <<EOF >> /etc/xray/serve.json
+    ],
+    "routing": {
+        "rules": [
 EOF
-                done
-            done
 
-            # 完成配置文件
+    # 为每个入站配置路由规则
+    first_rule=true
+    for port in "${!port_map[@]}"; do
+        for ipv4 in "${ipv4_addrs[@]}"; do
+            if [ "$first_rule" = true ]; then
+                first_rule=false
+            else
+                echo "            ," >> /etc/xray/serve.json
+            fi
+            
             cat <<EOF >> /etc/xray/serve.json
-    ]
+            {
+                "type": "field",
+                "inboundTag": ["in_${port}_${ipv4}"],
+                "outboundTag": "out_${port}"
+            }
+EOF
+        done
+    done
+
+    # 完成配置文件
+    cat <<EOF >> /etc/xray/serve.json
+        ]
     }
 }
 EOF
             ;;
-
     # 检查配置文件
     if ! /usr/local/bin/xray -test -config /etc/xray/serve.json; then
         echo -e "${RED}Xray 配置验证失败${NC}"
