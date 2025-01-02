@@ -655,6 +655,7 @@ get_main_interface() {
     echo $MAIN_INTERFACE
 }
 
+# 修改 add_ipv6_addresses 函数中的这部分代码
 add_ipv6_addresses() {
     local interface=$1
     local prefix=$2
@@ -673,11 +674,14 @@ add_ipv6_addresses() {
     if [ ! -f /proc/sys/net/ipv6/conf/$interface/disable_ipv6 ] || [ "$(cat /proc/sys/net/ipv6/conf/$interface/disable_ipv6)" != "0" ]; then
         echo -e "${RED}错误：IPv6未在接口 $interface 上启用${NC}"
         return 1
-    }
+    fi  # 删除这里多余的大括号
 
     # 确保系统允许添加多个IPv6地址
     sysctl -w net.ipv6.conf.all.accept_ra=2 > /dev/null 2>&1
     sysctl -w net.ipv6.conf.$interface.accept_ra=2 > /dev/null 2>&1
+    
+    # ... 其余代码保持不变 ...
+}
     
     for ((i=1; i<=count; i++)); do
         # 生成更短的后缀（使用16个字符而不是32个）
