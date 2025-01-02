@@ -630,23 +630,20 @@ add_ipv6_addresses() {
     echo "正在添加IPv6地址..."
     
     # 检查是否有权限修改网络配置
-    if ! ip -6 addr show dev $interface > /dev/null 2>&1; then
+    if ! ip -6 addr show dev "$interface" > /dev/null 2>&1; then
         echo -e "${RED}错误：没有足够的权限操作网络接口${NC}"
         return 1
     fi
 
     # 检查IPv6是否启用
-    if [ ! -f /proc/sys/net/ipv6/conf/$interface/disable_ipv6 ] || [ "$(cat /proc/sys/net/ipv6/conf/$interface/disable_ipv6)" != "0" ]; then
+    if [ ! -f "/proc/sys/net/ipv6/conf/$interface/disable_ipv6" ] || [ "$(cat /proc/sys/net/ipv6/conf/$interface/disable_ipv6)" != "0" ]; then
         echo -e "${RED}错误：IPv6未在接口 $interface 上启用${NC}"
         return 1
-    fi  # 删除这里多余的大括号
+    fi
 
     # 确保系统允许添加多个IPv6地址
     sysctl -w net.ipv6.conf.all.accept_ra=2 > /dev/null 2>&1
-    sysctl -w net.ipv6.conf.$interface.accept_ra=2 > /dev/null 2>&1
-    
-    # ... 其余代码保持不变 ...
-}
+    sysctl -w net.ipv6.conf."$interface".accept_ra=2 > /dev/null 2>&1
     
     for ((i=1; i<=count; i++)); do
         # 生成更短的后缀（使用16个字符而不是32个）
@@ -657,9 +654,9 @@ add_ipv6_addresses() {
         
         # 使用ip命令添加地址，并增加重试机制
         for retry in {1..3}; do
-            if ip -6 addr add ${ipv6_addr}/64 dev $interface 2>/dev/null; then
+            if ip -6 addr add "${ipv6_addr}/64" dev "$interface" 2>/dev/null; then
                 echo -e "${GREEN}成功添加IPv6地址: ${ipv6_addr}${NC}"
-                added=$((added + 1))
+                ((added++))
                 break
             else
                 echo -e "${YELLOW}第 $retry 次尝试添加地址失败，等待重试...${NC}"
@@ -668,7 +665,7 @@ add_ipv6_addresses() {
         done
     done
 
-    if [ $added -eq 0 ]; then
+    if [ "$added" -eq 0 ]; then
         echo -e "${RED}警告：没有成功添加任何IPv6地址${NC}"
         echo "请检查以下几点："
         echo "1. 是否有root权限"
