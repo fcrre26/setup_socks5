@@ -442,7 +442,7 @@ cat <<EOF >> /etc/xray/serve.json
         "balancers": [{
             "tag": "ipv6_balancer",
             "selector": [$(printf '"%s",' "${outbound_tags[@]}" | sed 's/,$//')],
-            "strategy": "random"  # 确保这里是小写的 random
+            "strategy": "random"
         }],
         "rules": [{
             "type": "field",
