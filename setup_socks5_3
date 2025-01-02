@@ -635,6 +635,83 @@ test_proxy_connectivity() {
     return 0
 }
 
+# IP策略选择函数
+set_ip_strategy() {
+    # 获取系统的IPv4和IPv6地址
+    ipv4_addrs=($(hostname -I | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}'))
+    ipv6_addrs=($(ip -6 addr show | grep "scope global" | grep -v "temporary" | grep -oE '([0-9a-fA-F:]+/[0-9]+)' | cut -d'/' -f1))
+
+    echo -e "\n${YELLOW}可用的IP策略：${NC}"
+    echo "1. 同IP进出（每个IPv4进出都使用相同IP）"
+    echo "2. IPv4进随机IPv4出（所有IPv4入站，随机IPv4出站）"
+    echo "3. IPv4进随机IPv6出（所有IPv4入站，随机IPv6出站）"
+    echo "4. IPv4进固定IPv6出（不同端口对应固定IPv6）"
+    echo "0. 返回上级菜单"
+
+    while true; do
+        read -p "请选择IP策略 [0-4]: " strategy_choice
+        case $strategy_choice in
+            0)
+                return
+                ;;
+            1|2)
+                if [ ${#ipv4_addrs[@]} -eq 0 ]; then
+                    echo -e "${RED}错误: 未检测到IPv4地址${NC}"
+                    continue
+                fi
+                configure_ip_strategy $strategy_choice
+                break
+                ;;
+            3|4)
+                if [ ${#ipv4_addrs[@]} -eq 0 ]; then
+                    echo -e "${RED}错误: 未检测到IPv4地址${NC}"
+                    continue
+                fi
+                if [ ${#ipv6_addrs[@]} -eq 0 ]; then
+                    echo -e "${RED}错误: 未检测到IPv6地址${NC}"
+                    continue
+                fi
+
+                if [ $strategy_choice -eq 4 ]; then
+                    # 端口到IPv6的映射
+                    declare -A port_ipv6_map
+                    echo -e "\n${YELLOW}当前可用的IPv6地址：${NC}"
+                    for i in "${!ipv6_addrs[@]}"; do
+                        echo "$((i+1)). ${ipv6_addrs[$i]}"
+                    done
+
+                    read -p "请输入需要配置的端口数量: " port_count
+                    if ! [[ $port_count =~ ^[0-9]+$ ]] || [ $port_count -lt 1 ]; then
+                        echo -e "${RED}无效的端口数量${NC}"
+                        continue
+                    fi
+
+                    for ((i=0; i<port_count; i++)); do
+                        current_port=$((socks_port + i))
+                        while true; do
+                            read -p "请为端口 $current_port 选择IPv6地址编号 [1-${#ipv6_addrs[@]}]: " ipv6_choice
+                            if [[ $ipv6_choice =~ ^[0-9]+$ ]] && [ $ipv6_choice -ge 1 ] && [ $ipv6_choice -le ${#ipv6_addrs[@]} ]; then
+                                port_ipv6_map[$current_port]=${ipv6_addrs[$((ipv6_choice-1))]}
+                                break
+                            else
+                                echo -e "${RED}无效的选择${NC}"
+                            fi
+                        done
+                    done
+                    configure_ip_strategy $strategy_choice port_ipv6_map
+                else
+                    configure_ip_strategy $strategy_choice
+                fi
+                break
+                ;;
+            *)
+                echo -e "${RED}无效的选择${NC}"
+                ;;
+        esac
+    done
+}
+
+
 # 清理函数
 clear_proxy_rules() {
     echo "清除所有代理规则..."
