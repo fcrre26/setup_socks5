@@ -435,14 +435,14 @@ EOF
 EOF
     done
 
-    # 完成配置文件
-    cat <<EOF >> /etc/xray/serve.json
+# 完成配置文件
+cat <<EOF >> /etc/xray/serve.json
     ],
     "routing": {
         "balancers": [{
             "tag": "ipv6_balancer",
             "selector": [$(printf '"%s",' "${outbound_tags[@]}" | sed 's/,$//')],
-            "strategy": "random"
+            "strategy": "random"  # 确保这里是小写的 random
         }],
         "rules": [{
             "type": "field",
