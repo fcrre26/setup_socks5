@@ -641,7 +641,11 @@ EOF
 }
 EOF
     ;;
-
+        *)
+            echo -e "${RED}无效的策略选择${NC}"
+            return 1
+            ;;
+    esac
 
     # 整体的检查配置文件（不是1 2 3 4）
     if ! /usr/local/bin/xray -test -config /etc/xray/serve.json; then
