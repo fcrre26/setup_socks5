@@ -773,7 +773,7 @@ EOF
                 log_message "ERROR" "没有可用的IPv6地址"
                 return 1
             fi
-        
+            
             # 随机排序IPv6地址
             ipv6_shuffled=($(printf "%s\n" "${ipv6_addrs[@]}" | shuf))
             outbound_tags=()
@@ -781,10 +781,7 @@ EOF
                 outbound_tags+=("outbound_$(echo $ipv6 | tr ':.' '_')")
             done
             
-            cat <<EOF > /etc/xray/serve.json
-            ...
-            EOF
-            ;;
+            cat > /etc/xray/serve.json << EOF
 {
     "inbounds": [
         {
@@ -817,7 +814,7 @@ EOF
                     echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.json
+                cat >> /etc/xray/serve.json << EOF
         {
             "protocol": "freedom",
             "tag": "$tag",
@@ -834,7 +831,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.json
+            cat >> /etc/xray/serve.json << EOF
     ],
     "routing": {
         "balancers": [
@@ -854,9 +851,10 @@ EOF
     }
 }
 EOF
+            ;;
 
         4)  # IPv4进，第一个端口IPv4出，其他端口对应固定IPv6出
-            cat > /etc/xray/serve.json << 'EOF'
+            cat > /etc/xray/serve.json << EOF
 {
     "inbounds": [
 EOF
@@ -892,7 +890,6 @@ EOF
 
             # 然后配置其他端口（IPv6出口）
             for port in "${!port_map[@]}"; do
-                # 跳过第一个端口，因为已经配置过了
                 if [ "$port" = "$socks_port" ]; then
                     continue
                 fi
@@ -921,7 +918,7 @@ EOF
                 done
             done
 
-            cat >> /etc/xray/serve.json << 'EOF'
+            cat >> /etc/xray/serve.json << EOF
     ],
     "outbounds": [
 EOF
@@ -975,7 +972,7 @@ EOF
 EOF
             done
 
-            cat >> /etc/xray/serve.json << 'EOF'
+            cat >> /etc/xray/serve.json << EOF
     ],
     "routing": {
         "rules": [
@@ -1015,12 +1012,12 @@ EOF
                 done
             done
 
-            cat >> /etc/xray/serve.json << 'EOF'
+            cat >> /etc/xray/serve.json << EOF
         ]
     }
 }
-            EOF
-            ;;       
+EOF
+            ;;        
            
         *)
             log_message "ERROR" "无效的策略选择"
