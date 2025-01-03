@@ -849,7 +849,7 @@ EOF
     }
 }
 EOF
-
+            ;;
             
 4)  # IPv4进，第一个端口IPv4出，其他端口对应固定IPv6出
     cat <<EOF > /etc/xray/serve.json
@@ -1017,7 +1017,6 @@ EOF
 }
 EOF
     ;;
-
 
             
         *)
