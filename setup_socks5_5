@@ -531,8 +531,9 @@ EOF
 }
 
 # 策略4：IPv4进，不同端口对应固定IPv6出
+# ... existing code ...
 generate_config_strategy_4() {
-    local -n port_ipv6_map=$1
+    local -n port_ipv6_map_ref=$1  # 修改这里，使用不同的变量名
     local port_count=$2
 
     cat <<EOF > /etc/xray/serve.json
@@ -581,7 +582,7 @@ EOF
     first_outbound=true
     for ((i=0; i<port_count; i++)); do
         current_port=$((socks_port + i))
-        current_ipv6="${port_ipv6_map[$current_port]}"
+        current_ipv6="${port_ipv6_map_ref[$current_port]}"  # 使用新的变量名
         
         if [ "$first_outbound" = true ]; then
             first_outbound=false
@@ -635,6 +636,7 @@ EOF
 }
 EOF
 }
+# ... existing code ...
 
 # 主配置函数
 configure_ip_strategy() {
