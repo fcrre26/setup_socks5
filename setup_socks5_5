@@ -1014,24 +1014,6 @@ set_socks5_credentials() {
     return 0
 }
 
-# 代理列表生成
-generate_proxy_list() {
-    local socks_port=$1
-    local socks_user=$2
-    local socks_pass=$3
-    local ips=($(hostname -I))
-    
-    log_message "INFO" "生成代理列表文件..."
-    echo -n "" > /root/proxy_list.txt
-    
-    for ip in "${ips[@]}"; do
-        echo "$ip:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
-    done
-    
-    log_message "INFO" "代理列表文件已生成：/root/proxy_list.txt"
-    return 0
-}
-
 # 测试代理连通性
 test_proxy_connectivity() {
     log_message "INFO" "开始测试代理连通性..."
