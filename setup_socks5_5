@@ -686,7 +686,7 @@ configure_ip_strategy() {
 }
 
 #配置IP进出策略
-# set_ip_strategy 函数中的相关部分
+# 设置IP策略的主函数
 set_ip_strategy() {
     echo "配置IP进出策略..."
 
@@ -712,7 +712,30 @@ set_ip_strategy() {
     read -p "请输入选项 [1-4]: " strategy
 
     case $strategy in
-        4)
+        1)  # 同IP进同IP出
+            configure_ip_strategy $strategy
+            ;;
+            
+        2)  # IPv4进随机IPv4出
+            # 检查IPv4地址数量
+            ipv4_count=${#ipv4_addrs[@]}
+            if [ $ipv4_count -lt 2 ]; then
+                echo -e "${RED}错误: 至少需要2个IPv4地址才能使用此策略${NC}"
+                return 1
+            fi
+            configure_ip_strategy $strategy
+            ;;
+            
+        3)  # IPv4进随机IPv6出
+            # 检查IPv6地址是否可用
+            if [ ${#ipv6_addrs[@]} -eq 0 ]; then
+                echo -e "${RED}错误: 没有可用的IPv6地址${NC}"
+                return 1
+            fi
+            configure_ip_strategy $strategy
+            ;;
+            
+        4)  # IPv4进，不同端口对应固定IPv6出
             # 获取当前可用的IPv6地址数量
             ipv6_count=${#ipv6_addrs[@]}
             echo -e "${YELLOW}当前可用的IPv6地址数量: $ipv6_count${NC}"
@@ -756,15 +779,15 @@ set_ip_strategy() {
 
             configure_ip_strategy $strategy port_ipv6_map $port_count
             ;;
-        1|2|3)
-            configure_ip_strategy $strategy
-            ;;
+            
         *)
             echo -e "${RED}无效的策略选择${NC}"
             return 1
             ;;
     esac
 }
+
+
 # 代理管理模块
 generate_proxy_list() {
     local socks_port=$1
