@@ -566,7 +566,7 @@ configure_ip_strategy() {
         log_message "ERROR" "没有可用的IPv4地址"
         return 1
     fi
-
+    
     # 备份当前配置
     backup_config
     
@@ -578,7 +578,7 @@ configure_ip_strategy() {
     
     case $strategy in
         1)  # 同IP进同IP出
-            cat <<EOF > /etc/xray/serve.json
+            cat > /etc/xray/serve.json << 'EOF'
 {
     "inbounds": [
 EOF
@@ -590,7 +590,7 @@ EOF
                     echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.json
+                cat >> /etc/xray/serve.json << EOF
         {
             "listen": "$ipv4",
             "port": $socks_port,
@@ -611,7 +611,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.json
+            cat >> /etc/xray/serve.json << 'EOF'
     ],
     "outbounds": [
 EOF
@@ -623,7 +623,7 @@ EOF
                     echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.json
+                cat >> /etc/xray/serve.json << EOF
         {
             "protocol": "freedom",
             "tag": "out_$ipv4",
@@ -640,7 +640,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.json
+            cat >> /etc/xray/serve.json << 'EOF'
     ],
     "routing": {
         "rules": [
@@ -653,7 +653,7 @@ EOF
                     echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.json
+                cat >> /etc/xray/serve.json << EOF
             {
                 "type": "field",
                 "inboundTag": ["in_$ipv4"],
@@ -662,15 +662,15 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.json
+            cat >> /etc/xray/serve.json << 'EOF'
         ]
     }
 }
 EOF
             ;;
-            
+
         2)  # IPv4进随机IPv4出
-            cat <<EOF > /etc/xray/serve.json
+            cat > /etc/xray/serve.json << 'EOF'
 {
     "inbounds": [
 EOF
@@ -682,7 +682,7 @@ EOF
                     echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.json
+                cat >> /etc/xray/serve.json << EOF
         {
             "listen": "$ipv4",
             "port": $socks_port,
@@ -703,7 +703,7 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.json
+            cat >> /etc/xray/serve.json << 'EOF'
     ],
     "outbounds": [
 EOF
@@ -715,7 +715,7 @@ EOF
                     echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.json
+                cat >> /etc/xray/serve.json << EOF
         {
             "protocol": "freedom",
             "tag": "out_$ipv4",
@@ -732,13 +732,26 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.json
+            cat >> /etc/xray/serve.json << 'EOF'
     ],
     "routing": {
         "balancers": [
             {
                 "tag": "ipv4_balancer",
-                "selector": [$(printf '"out_%s",' "${ipv4_addrs[@]}" | sed 's/,$//')],
+                "selector": [
+EOF
+            first=true
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                if [ "$first" = true ]; then
+                    first=false
+                else
+                    echo "," >> /etc/xray/serve.json
+                fi
+                echo "                    \"out_$ipv4\"" >> /etc/xray/serve.json
+            done
+
+            cat >> /etc/xray/serve.json << 'EOF'
+                ],
                 "strategy": "random"
             }
         ],
@@ -752,7 +765,7 @@ EOF
                     echo "," >> /etc/xray/serve.json
                 fi
                 
-                cat <<EOF >> /etc/xray/serve.json
+                cat >> /etc/xray/serve.json << EOF
             {
                 "type": "field",
                 "inboundTag": ["in_$ipv4"],
@@ -761,37 +774,47 @@ EOF
 EOF
             done
 
-            cat <<EOF >> /etc/xray/serve.json
+            cat >> /etc/xray/serve.json << 'EOF'
         ]
     }
 }
 EOF
             ;;
+
         3)  # IPv4进随机IPv6出
-            # 检查IPv6地址
             if [ ${#ipv6_addrs[@]} -eq 0 ]; then
                 log_message "ERROR" "没有可用的IPv6地址"
                 return 1
             fi
             
-            # 随机排序IPv6地址
             ipv6_shuffled=($(printf "%s\n" "${ipv6_addrs[@]}" | shuf))
             outbound_tags=()
             for ipv6 in "${ipv6_shuffled[@]}"; do
                 outbound_tags+=("outbound_$(echo $ipv6 | tr ':.' '_')")
             done
             
-            cat > /etc/xray/serve.json << EOF
+            cat > /etc/xray/serve.json << 'EOF'
 {
     "inbounds": [
+EOF
+            first=true
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                if [ "$first" = true ]; then
+                    first=false
+                else
+                    echo "," >> /etc/xray/serve.json
+                fi
+                
+                cat >> /etc/xray/serve.json << EOF
         {
-            "listen": "${ipv4_addrs[0]}",
+            "listen": "$ipv4",
             "port": $socks_port,
             "protocol": "socks",
-            "tag": "inbound-ipv4",
+            "tag": "in_$ipv4",
             "settings": {
                 "auth": "password",
                 "udp": true,
+                "ip": "$ipv4",
                 "accounts": [
                     {
                         "user": "$socks_user",
@@ -800,6 +823,10 @@ EOF
                 ]
             }
         }
+EOF
+            done
+
+            cat >> /etc/xray/serve.json << 'EOF'
     ],
     "outbounds": [
 EOF
@@ -831,38 +858,64 @@ EOF
 EOF
             done
 
-            cat >> /etc/xray/serve.json << EOF
+            cat >> /etc/xray/serve.json << 'EOF'
     ],
     "routing": {
         "balancers": [
             {
                 "tag": "ipv6_balancer",
-                "selector": [$(printf '"%s",' "${outbound_tags[@]}" | sed 's/,$//')],
+                "selector": [
+EOF
+            first=true
+            for tag in "${outbound_tags[@]}"; do
+                if [ "$first" = true ]; then
+                    first=false
+                else
+                    echo "," >> /etc/xray/serve.json
+                fi
+                echo "                    \"$tag\"" >> /etc/xray/serve.json
+            done
+
+            cat >> /etc/xray/serve.json << 'EOF'
+                ],
                 "strategy": "random"
             }
         ],
         "rules": [
+EOF
+            first=true
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                if [ "$first" = true ]; then
+                    first=false
+                else
+                    echo "," >> /etc/xray/serve.json
+                fi
+                
+                cat >> /etc/xray/serve.json << EOF
             {
                 "type": "field",
-                "inboundTag": ["inbound-ipv4"],
+                "inboundTag": ["in_$ipv4"],
                 "balancerTag": "ipv6_balancer"
             }
+EOF
+            done
+
+            cat >> /etc/xray/serve.json << 'EOF'
         ]
     }
 }
 EOF
             ;;
 
-        4)  # IPv4进，第一个端口IPv4出，其他端口对应固定IPv6出
-            cat > /etc/xray/serve.json << EOF
+        4)  # IPv4进固定端口对应固定IPv6出
+            cat > /etc/xray/serve.json << 'EOF'
 {
     "inbounds": [
 EOF
-            # 首先配置第一个端口（IPv4出口）
-            first_inbound=true
+            first=true
             for ipv4 in "${ipv4_addrs[@]}"; do
-                if [ "$first_inbound" = true ]; then
-                    first_inbound=false
+                if [ "$first" = true ]; then
+                    first=false
                 else
                     echo "," >> /etc/xray/serve.json
                 fi
@@ -886,15 +939,10 @@ EOF
             }
         }
 EOF
-            done
-
-            # 然后配置其他端口（IPv6出口）
-            for port in "${!port_map[@]}"; do
-                if [ "$port" = "$socks_port" ]; then
-                    continue
-                fi
-                ipv6=${port_map[$port]}
-                for ipv4 in "${ipv4_addrs[@]}"; do
+                for port in "${!port_map[@]}"; do
+                    if [ "$port" = "$socks_port" ]; then
+                        continue
+                    fi
                     echo "," >> /etc/xray/serve.json
                     cat >> /etc/xray/serve.json << EOF
         {
@@ -918,15 +966,14 @@ EOF
                 done
             done
 
-            cat >> /etc/xray/serve.json << EOF
+            cat >> /etc/xray/serve.json << 'EOF'
     ],
     "outbounds": [
 EOF
-            # 配置第一个出口（IPv4）
-            first_outbound=true
+            first=true
             for ipv4 in "${ipv4_addrs[@]}"; do
-                if [ "$first_outbound" = true ]; then
-                    first_outbound=false
+                if [ "$first" = true ]; then
+                    first=false
                 else
                     echo "," >> /etc/xray/serve.json
                 fi
@@ -948,7 +995,6 @@ EOF
 EOF
             done
 
-            # 配置其他出口（IPv6）
             for port in "${!port_map[@]}"; do
                 if [ "$port" = "$socks_port" ]; then
                     continue
@@ -972,16 +1018,15 @@ EOF
 EOF
             done
 
-            cat >> /etc/xray/serve.json << EOF
+            cat >> /etc/xray/serve.json << 'EOF'
     ],
     "routing": {
         "rules": [
 EOF
-            # 配置第一个端口的路由规则（IPv4）
-            first_rule=true
+            first=true
             for ipv4 in "${ipv4_addrs[@]}"; do
-                if [ "$first_rule" = true ]; then
-                    first_rule=false
+                if [ "$first" = true ]; then
+                    first=false
                 else
                     echo "," >> /etc/xray/serve.json
                 fi
@@ -995,7 +1040,6 @@ EOF
 EOF
             done
 
-            # 配置其他端口的路由规则（IPv6）
             for port in "${!port_map[@]}"; do
                 if [ "$port" = "$socks_port" ]; then
                     continue
@@ -1012,13 +1056,13 @@ EOF
                 done
             done
 
-            cat >> /etc/xray/serve.json << EOF
+            cat >> /etc/xray/serve.json << 'EOF'
         ]
     }
 }
 EOF
-            ;;        
-           
+            ;;
+            
         *)
             log_message "ERROR" "无效的策略选择"
             return 1
@@ -1046,6 +1090,7 @@ EOF
     log_message "INFO" "IP策略设置完成并成功启动服务"
     return 0
 }
+
 
 # SOCKS5代理设置
 set_socks5_credentials() {
