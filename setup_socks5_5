@@ -804,13 +804,7 @@ EOF
 
     # 检查是否有可用的 IPv6 地址
     if [ ${#outbound_tags[@]} -eq 0 ]; then
-        log_message "ERROR" "没有可用的IPv6地址"
-        return 1
-    fi
-
-    # 确保变量有值
-    if [ -z "$socks_port" ] || [ -z "$socks_user" ] || [ -z "$socks_pass" ]; then
-        log_message "ERROR" "SOCKS5配置不完整"
+        echo -e "${RED}错误：没有可用的IPv6地址${NC}"
         return 1
     fi
 
@@ -819,13 +813,13 @@ EOF
 {
     "inbounds": [{
         "listen": "${ipv4_addrs[0]}",
-        "port": ${socks_port},
+        "port": $socks_port,
         "protocol": "socks",
         "tag": "inbound-ipv4",
         "settings": {
             "auth": "password",
             "udp": true,
-            "accounts": [{"user": "${socks_user}", "pass": "${socks_pass}"}]
+            "accounts": [{"user": "$socks_user", "pass": "$socks_pass"}]
         }
     }],
     "outbounds": [
@@ -894,6 +888,7 @@ EOF
 
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
     ;;
+
 
         4)  # IPv4进固定端口对应固定IPv6出
             cat > /etc/xray/serve.json << 'EOF'
