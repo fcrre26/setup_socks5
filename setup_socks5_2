@@ -574,39 +574,15 @@ generate_proxy_list() {
     return 0
 }
 
-# 修改代理设置模块
+# 代理设置模块
 set_socks5_credentials() {
-    # 设置全局变量的默认值
-    socks_port=${socks_port:-"20000"}
-    socks_user=${socks_user:-"123456"}
-    socks_pass=${socks_pass:-"123456"}
-    
-    # 提示用户输入，显示当前值
-    read -p "请输入SOCKS5起始端口 [当前: $socks_port]: " input_port
-    socks_port=${input_port:-$socks_port}
-    
-    read -p "请输入用户名 [当前: $socks_user]: " input_user
-    socks_user=${input_user:-$socks_user}
-    
-    read -p "请输入密码 [当前: $socks_pass]: " input_pass
-    socks_pass=${input_pass:-$socks_pass}
-    
-    echo -e "\n当前设置："
-    echo "端口: $socks_port"
-    echo "用户名: $socks_user"
-    echo "密码: $socks_pass"
-    
-    read -p "确认使用这些设置吗？[Y/n] " confirm
-    confirm=${confirm:-Y}
-    
-    if [[ $confirm =~ ^[Yy]$ ]]; then
-        export socks_port socks_user socks_pass  # 导出变量供其他函数使用
-        set_ip_strategy
-        return 0
-    else
-        echo "已取消设置。"
-        return 1
-    fi
+    read -p "请输入SOCKS5起始端口: " socks_port
+    read -p "请输入用户名: " socks_user
+    read -p "请输入密码: " socks_pass
+    set_ip_strategy
+    generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
+    echo "SOCKS5端口、用户名和密码设置完成。"
+    return 0
 }
 
 # 工具函数
