@@ -783,32 +783,24 @@ EOF
             ;;
 
 3)  # IPv4进随机IPv6出（不重复直到耗尽）
-    # 获取IPv6地址
-    ipv6_addrs=($(ip -6 addr show | grep "scope global" | grep -v "temporary" | awk '{print $2}' | cut -d'/' -f1))
-    
-    # 确保获取到了IPv6地址
-    if [ ${#ipv6_addrs[@]} -eq 0 ]; then
-        log_message "ERROR" "没有找到可用的IPv6地址"
-        return 1
-    fi
-    
-    log_message "INFO" "找到 ${#ipv6_addrs[@]} 个IPv6地址"
-    for ipv6 in "${ipv6_addrs[@]}"; do
-        log_message "INFO" "IPv6地址: $ipv6"
-    done
-
-    # 生成所有 outbound tags
+    # 首先生成所有 outbound tags
     ipv6_shuffled=($(printf "%s\n" "${ipv6_addrs[@]}" | shuf))
     outbound_tags=()
     for ipv6 in "${ipv6_shuffled[@]}"; do
         outbound_tags+=("outbound_$(echo $ipv6 | tr ':.' '_')")
     done
 
+    # 检查是否有可用的 IPv6 地址
+    if [ ${#outbound_tags[@]} -eq 0 ]; then
+        echo -e "${RED}错误：没有可用的IPv6地址${NC}"
+        return 1
+    fi
+
     # 生成配置文件
     cat <<EOF > /etc/xray/serve.json
 {
     "inbounds": [{
-        "listen": "0.0.0.0",
+        "listen": "${ipv4_addrs[0]}",
         "port": $socks_port,
         "protocol": "socks",
         "tag": "inbound-ipv4",
@@ -837,25 +829,17 @@ EOF
         {
             "protocol": "freedom",
             "tag": "$tag",
-            "settings": {
-                "domainStrategy": "UseIPv6"
-            },
-            "streamSettings": {
-                "sockopt": {
-                    "mark": 255,
-                    "tproxy": false
-                }
-            },
+            "settings": {"domainStrategy": "UseIPv6"},
+            "streamSettings": {"sockopt": {"mark": 255}},
             "sendThrough": "$ipv6"
         }
 EOF
     done
 
-    # 完成配置文件
-    cat <<EOF >> /etc/xray/serve.json
+# 完成配置文件
+cat <<EOF >> /etc/xray/serve.json
     ],
     "routing": {
-        "domainStrategy": "UseIPv6",
         "balancers": [{
             "tag": "ipv6_balancer",
             "selector": [$(printf '"%s",' "${outbound_tags[@]}" | sed 's/,$//')],
@@ -873,9 +857,9 @@ EOF
 EOF
 
     # 验证配置
-    log_message "INFO" "验证配置文件..."
+    echo -e "${YELLOW}验证配置文件...${NC}"
     if ! /usr/local/bin/xray -test -config /etc/xray/serve.json; then
-        log_message "ERROR" "配置验证失败"
+        echo -e "${RED}配置验证失败，配置文件内容：${NC}"
         cat /etc/xray/serve.json
         return 1
     fi
@@ -885,15 +869,13 @@ EOF
     sleep 2
 
     if ! systemctl is-active --quiet xray; then
-        log_message "ERROR" "Xray 服务启动失败"
+        echo -e "${RED}Xray 服务启动失败${NC}"
         systemctl status xray
         return 1
     fi
 
-    log_message "INFO" "IP策略设置完成并成功启动服务"
+    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
     ;;
-
-
 
         4)  # IPv4进固定端口对应固定IPv6出
             cat > /etc/xray/serve.json << 'EOF'
