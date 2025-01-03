@@ -749,6 +749,7 @@ set_ip_strategy() {
 
 
 # 代理列表生成
+# 代理列表生成
 generate_proxy_list() {
     local socks_port=$1
     local socks_user=$2
@@ -802,33 +803,19 @@ generate_proxy_list() {
         4)
             echo "# 策略4：第一个端口对应IPv4，其他端口对应固定IPv6" >> /root/proxy_list.txt
             
-            # 从xray配置文件中读取端口和IP映射
-            local port_ip_mappings=()
-            while IFS= read -r line; do
-                if [[ $line =~ \"port\":\ ([0-9]+) ]]; then
-                    current_port="${BASH_REMATCH[1]}"
-                elif [[ $line =~ \"sendThrough\":\ \"([^\"]+)\" ]]; then
-                    current_ip="${BASH_REMATCH[1]}"
-                    port_ip_mappings+=("$current_port:$current_ip")
-                fi
-            done < /etc/xray/serve.json
+            # 第一个端口使用IPv4
+            for ipv4 in "${ipv4_addrs[@]}"; do
+                echo "$ipv4:$socks_port:$socks_user:$socks_pass:$ipv4" >> /root/proxy_list.txt
+            done
             
-            # 写入代理列表
-            local counter=0
-            for mapping in "${port_ip_mappings[@]}"; do
-                port="${mapping%%:*}"
-                target_ip="${mapping#*:}"
-                
-                for source_ip in "${ipv4_addrs[@]}"; do
-                    if [ $counter -eq 0 ]; then
-                        # 第一个端口使用IPv4
-                        echo "$source_ip:$port:$socks_user:$socks_pass:$source_ip" >> /root/proxy_list.txt
-                    else
-                        # 其他端口使用IPv6
-                        echo "$source_ip:$port:$socks_user:$socks_pass:$target_ip" >> /root/proxy_list.txt
-                    fi
+            # 后续端口使用IPv6
+            local port_num=1
+            for ipv6 in "${ipv6_addrs[@]}"; do
+                current_port=$((socks_port + port_num))
+                for ipv4 in "${ipv4_addrs[@]}"; do
+                    echo "$ipv4:$current_port:$socks_user:$socks_pass:$ipv6" >> /root/proxy_list.txt
                 done
-                ((counter++))
+                ((port_num++))
             done
             ;;
             
