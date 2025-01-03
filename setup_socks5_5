@@ -476,7 +476,6 @@ EOF
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
     ;;
 
-case $strategy in
     4)  # IPv4进，第一个端口对应原IPv4，从第二个端口开始对应IPv6
         cat <<EOF > /etc/xray/serve.json
 {
