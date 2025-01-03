@@ -674,6 +674,8 @@ set_ip_strategy() {
     echo "4. IPv4进，不同端口对应固定IPv6出（自动分配）"
     read -p "请输入选项 [1-4]: " strategy
 
+    local config_result=0
+
     case $strategy in
         4)
             # 获取当前可用的IPv6地址数量
@@ -718,18 +720,33 @@ set_ip_strategy() {
             fi
 
             configure_ip_strategy $strategy port_ipv6_map
+            config_result=$?
             ;;
         1|2|3)
             configure_ip_strategy $strategy
+            config_result=$?
             ;;
         *)
             echo -e "${RED}无效的策略选择${NC}"
             return 1
             ;;
     esac
+
+    # 检查配置结果并生成代理列表
+    if [ $config_result -eq 0 ]; then
+        generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}策略配置和代理列表生成成功${NC}"
+            return 0
+        else
+            echo -e "${RED}代理列表生成失败${NC}"
+            return 1
+        fi
+    else
+        echo -e "${RED}策略配置失败，跳过生成代理列表${NC}"
+        return 1
+    fi
 }
-
-
 
 
 # 代理列表生成
