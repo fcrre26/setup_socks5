@@ -856,22 +856,28 @@ generate_proxy_list() {
 
 # 修改代理设置模块
 set_socks5_credentials() {
-    # 设置全局变量的默认值
-    socks_port=${socks_port:-"20000"}
-    socks_user=${socks_user:-"123456"}
-    socks_pass=${socks_pass:-"123456"}
+    # 设置默认值（如果变量未定义）
+    : ${socks_port:="20000"}
+    : ${socks_user:="123456"}
+    : ${socks_pass:="123456"}
     
-    # 提示用户输入，显示当前值
+    echo -e "\n${YELLOW}SOCKS5代理设置${NC}"
+    echo "当前设置："
+    echo "端口: $socks_port"
+    echo "用户名: $socks_user"
+    echo "密码: $socks_pass"
+    echo -e "${GREEN}（直接回车保持当前值）${NC}\n"
+    
     read -p "请输入SOCKS5起始端口 [当前: $socks_port]: " input_port
-    socks_port=${input_port:-$socks_port}
-    
     read -p "请输入用户名 [当前: $socks_user]: " input_user
-    socks_user=${input_user:-$socks_user}
-    
     read -p "请输入密码 [当前: $socks_pass]: " input_pass
+    
+    # 更新值（如果用户输入了新值）
+    socks_port=${input_port:-$socks_port}
+    socks_user=${input_user:-$socks_user}
     socks_pass=${input_pass:-$socks_pass}
     
-    echo -e "\n当前设置："
+    echo -e "\n${YELLOW}确认设置：${NC}"
     echo "端口: $socks_port"
     echo "用户名: $socks_user"
     echo "密码: $socks_pass"
@@ -880,7 +886,8 @@ set_socks5_credentials() {
     confirm=${confirm:-Y}
     
     if [[ $confirm =~ ^[Yy]$ ]]; then
-        export socks_port socks_user socks_pass  # 导出变量供其他函数使用
+        # 导出变量供其他函数使用
+        export socks_port socks_user socks_pass
         set_ip_strategy
         return 0
     else
