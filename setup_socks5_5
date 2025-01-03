@@ -537,16 +537,20 @@ EOF
     "outbounds": [
 EOF
 
-            # 第一个端口的出站配置 - 使用IPv4
-            first_outbound=true
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                if [ "$first_outbound" = true ]; then
-                    first_outbound=false
-                else
-                    echo "," >> /etc/xray/serve.json
-                fi
-                
-                cat <<EOF >> /etc/xray/serve.json
+# 在策略4中，修改端口分配逻辑
+4)  # IPv4进，第一个端口对应原IPv4，从第二个端口开始对应IPv6
+    # ... 前面的代码保持不变 ...
+
+    # 第一个端口的出站配置 - 使用IPv4（修改这部分）
+    first_outbound=true
+    for ipv4 in "${ipv4_addrs[@]}"; do
+        if [ "$first_outbound" = true ]; then
+            first_outbound=false
+        else
+            echo "," >> /etc/xray/serve.json
+        fi
+        
+        cat <<EOF >> /etc/xray/serve.json
         {
             "protocol": "freedom",
             "tag": "out_${socks_port}_${ipv4}",
@@ -555,14 +559,14 @@ EOF
             "sendThrough": "$ipv4"
         }
 EOF
-            done
+    done
 
-            # 后续端口的出站配置 - 使用IPv6
-            for ((i=0; i<${#ipv6_addrs[@]}; i++)); do
-                current_port=$((socks_port + i + 1))
-                ipv6=${ipv6_addrs[$i]}
-                echo "," >> /etc/xray/serve.json
-                cat <<EOF >> /etc/xray/serve.json
+    # 后续端口的出站配置 - 使用IPv6（从socks_port + 1开始）
+    for ((i=0; i<${#ipv6_addrs[@]}; i++)); do
+        current_port=$((socks_port + i + 1))
+        ipv6=${ipv6_addrs[$i]}
+        echo "," >> /etc/xray/serve.json
+        cat <<EOF >> /etc/xray/serve.json
         {
             "protocol": "freedom",
             "tag": "out_${current_port}",
@@ -571,7 +575,7 @@ EOF
             "sendThrough": "$ipv6"
         }
 EOF
-            done
+    done
 
             # 添加路由规则
             cat <<EOF >> /etc/xray/serve.json
@@ -850,22 +854,22 @@ generate_proxy_list() {
 }
 
 
-# 代理设置模块
+# 修改代理设置模块
 set_socks5_credentials() {
-    # 设置默认值
-    local default_port="20000"
-    local default_user="123456"
-    local default_pass="123456"
+    # 设置全局变量的默认值
+    socks_port=${socks_port:-"20000"}
+    socks_user=${socks_user:-"123456"}
+    socks_pass=${socks_pass:-"123456"}
     
-    # 提示用户输入，支持默认值
-    read -p "请输入SOCKS5起始端口 [默认: $default_port]: " input_port
-    socks_port=${input_port:-$default_port}
+    # 提示用户输入，显示当前值
+    read -p "请输入SOCKS5起始端口 [当前: $socks_port]: " input_port
+    socks_port=${input_port:-$socks_port}
     
-    read -p "请输入用户名 [默认: $default_user]: " input_user
-    socks_user=${input_user:-$default_user}
+    read -p "请输入用户名 [当前: $socks_user]: " input_user
+    socks_user=${input_user:-$socks_user}
     
-    read -p "请输入密码 [默认: $default_pass]: " input_pass
-    socks_pass=${input_pass:-$default_pass}
+    read -p "请输入密码 [当前: $socks_pass]: " input_pass
+    socks_pass=${input_pass:-$socks_pass}
     
     echo -e "\n当前设置："
     echo "端口: $socks_port"
@@ -876,15 +880,13 @@ set_socks5_credentials() {
     confirm=${confirm:-Y}
     
     if [[ $confirm =~ ^[Yy]$ ]]; then
+        export socks_port socks_user socks_pass  # 导出变量供其他函数使用
         set_ip_strategy
-        generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
-        echo "SOCKS5端口、用户名和密码设置完成。"
+        return 0
     else
         echo "已取消设置。"
         return 1
     fi
-    
-    return 0
 }
 
 
