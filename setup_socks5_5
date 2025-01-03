@@ -532,14 +532,15 @@ EOF
 
 # 策略4：IPv4进，不同端口对应固定IPv6出
 generate_config_strategy_4() {
-    local -n port_map=$1
-    
+    local -n port_ipv6_map=$1
+    local port_count=$2
+
     cat <<EOF > /etc/xray/serve.json
 {
     "inbounds": [
 EOF
 
-    # 写入所有入站配置
+    # 首先配置所有入站
     first_inbound=true
     for ((i=0; i<port_count; i++)); do
         current_port=$((socks_port + i))
@@ -570,16 +571,17 @@ EOF
         done
     done
 
-    # 写入出站配置
+    # 添加出站配置
     cat <<EOF >> /etc/xray/serve.json
     ],
     "outbounds": [
 EOF
 
+    # 配置所有出站
     first_outbound=true
     for ((i=0; i<port_count; i++)); do
         current_port=$((socks_port + i))
-        ipv6=${port_map[$current_port]}
+        current_ipv6="${port_ipv6_map[$current_port]}"
         
         if [ "$first_outbound" = true ]; then
             first_outbound=false
@@ -593,18 +595,19 @@ EOF
             "tag": "out_$current_port",
             "settings": { "domainStrategy": "UseIPv6" },
             "streamSettings": { "sockopt": { "mark": 255 } },
-            "sendThrough": "$ipv6"
+            "sendThrough": "$current_ipv6"
         }
 EOF
     done
 
-    # 写入路由规则
+    # 添加路由规则
     cat <<EOF >> /etc/xray/serve.json
     ],
     "routing": {
         "rules": [
 EOF
 
+    # 配置所有路由规则
     first_rule=true
     for ((i=0; i<port_count; i++)); do
         current_port=$((socks_port + i))
@@ -625,6 +628,7 @@ EOF
         done
     done
 
+    # 完成配置文件
     cat <<EOF >> /etc/xray/serve.json
         ]
     }
@@ -635,14 +639,9 @@ EOF
 # 主配置函数
 configure_ip_strategy() {
     local strategy=$1
-    local -n port_map
-    if [ "$2" ]; then
-        port_map=$2
-    fi
     
     mkdir -p /etc/xray
     
-    # 根据策略生成配置
     case "$strategy" in
         "1")
             generate_config_strategy_1
@@ -654,7 +653,11 @@ configure_ip_strategy() {
             generate_config_strategy_3
             ;;
         "4")
-            generate_config_strategy_4 port_map
+            if [ -z "$2" ] || [ -z "$3" ]; then
+                echo -e "${RED}错误：策略4需要端口映射和端口数量参数${NC}"
+                return 1
+            fi
+            generate_config_strategy_4 "$2" "$3"
             ;;
         *)
             echo -e "${RED}无效的策略选择${NC}"
@@ -683,6 +686,7 @@ configure_ip_strategy() {
 }
 
 #配置IP进出策略
+# set_ip_strategy 函数中的相关部分
 set_ip_strategy() {
     echo "配置IP进出策略..."
 
@@ -750,7 +754,7 @@ set_ip_strategy() {
                 return 1
             fi
 
-            configure_ip_strategy $strategy port_ipv6_map
+            configure_ip_strategy $strategy port_ipv6_map $port_count
             ;;
         1|2|3)
             configure_ip_strategy $strategy
@@ -761,7 +765,6 @@ set_ip_strategy() {
             ;;
     esac
 }
-
 # 代理管理模块
 generate_proxy_list() {
     local socks_port=$1
