@@ -807,9 +807,21 @@ generate_proxy_list() {
 
 # 代理设置模块
 set_socks5_credentials() {
-    read -p "请输入SOCKS5起始端口: " socks_port
-    read -p "请输入用户名: " socks_user
-    read -p "请输入密码: " socks_pass
+    # 设置默认值
+    local default_port=20000
+    local default_user="pnqu4x"
+    local default_pass="zqgzNK3LRS"
+
+    # 提示用户输入，使用默认值作为提示
+    read -p "请输入SOCKS5起始端口 (默认: $default_port): " socks_port
+    socks_port=${socks_port:-$default_port}  # 如果用户没有输入，使用默认值
+
+    read -p "请输入用户名 (默认: $default_user): " socks_user
+    socks_user=${socks_user:-$default_user}  # 如果用户没有输入，使用默认值
+
+    read -p "请输入密码 (默认: $default_pass): " socks_pass
+    socks_pass=${socks_pass:-$default_pass}  # 如果用户没有输入，使用默认值
+
     set_ip_strategy
     generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
     echo "SOCKS5端口、用户名和密码设置完成。"
