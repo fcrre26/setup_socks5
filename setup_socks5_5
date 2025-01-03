@@ -565,8 +565,7 @@ configure_ip_strategy() {
     if [ ${#ipv4_addrs[@]} -eq 0 ]; then
         log_message "ERROR" "没有可用的IPv4地址"
         return 1
-    }
-    
+        
     # 备份当前配置
     backup_config
     
