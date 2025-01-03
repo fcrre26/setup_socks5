@@ -284,6 +284,7 @@ show_current_ipv6() {
 }
 
 # IP策略配置模块
+# IP策略配置模块
 configure_ip_strategy() {
     local strategy=$1
     local -n port_map # 修改声明方式
@@ -381,22 +382,22 @@ EOF
             done
             ;;
 
-3)  # IPv4进随机IPv6出（不重复直到耗尽）
-    # 首先生成所有 outbound tags
-    ipv6_shuffled=($(printf "%s\n" "${ipv6_addrs[@]}" | shuf))
-    outbound_tags=()
-    for ipv6 in "${ipv6_shuffled[@]}"; do
-        outbound_tags+=("outbound_$(echo $ipv6 | tr ':.' '_')")
-    done
+        3)  # IPv4进随机IPv6出
+            # 首先生成所有 outbound tags
+            ipv6_shuffled=($(printf "%s\n" "${ipv6_addrs[@]}" | shuf))
+            outbound_tags=()
+            for ipv6 in "${ipv6_shuffled[@]}"; do
+                outbound_tags+=("outbound_$(echo $ipv6 | tr ':.' '_')")
+            done
 
-    # 检查是否有可用的 IPv6 地址
-    if [ ${#outbound_tags[@]} -eq 0 ]; then
-        echo -e "${RED}错误：没有可用的IPv6地址${NC}"
-        return 1
-    fi
+            # 检查是否有可用的 IPv6 地址
+            if [ ${#outbound_tags[@]} -eq 0 ]; then
+                echo -e "${RED}错误：没有可用的IPv6地址${NC}"
+                return 1
+            fi
 
-    # 生成配置文件
-    cat <<EOF > /etc/xray/serve.json
+            # 生成配置文件
+            cat <<EOF > /etc/xray/serve.json
 {
     "inbounds": [{
         "listen": "${ipv4_addrs[0]}",
@@ -412,19 +413,19 @@ EOF
     "outbounds": [
 EOF
 
-    # 写入出站配置
-    first=true
-    for i in "${!ipv6_shuffled[@]}"; do
-        ipv6=${ipv6_shuffled[$i]}
-        tag=${outbound_tags[$i]}
-        
-        if [ "$first" = true ]; then
-            first=false
-        else
-            echo "        ," >> /etc/xray/serve.json
-        fi
-        
-        cat <<EOF >> /etc/xray/serve.json
+            # 写入出站配置
+            first=true
+            for i in "${!ipv6_shuffled[@]}"; do
+                ipv6=${ipv6_shuffled[$i]}
+                tag=${outbound_tags[$i]}
+                
+                if [ "$first" = true ]; then
+                    first=false
+                else
+                    echo "        ," >> /etc/xray/serve.json
+                fi
+                
+                cat <<EOF >> /etc/xray/serve.json
         {
             "protocol": "freedom",
             "tag": "$tag",
@@ -433,10 +434,10 @@ EOF
             "sendThrough": "$ipv6"
         }
 EOF
-    done
+            done
 
-# 完成配置文件
-cat <<EOF >> /etc/xray/serve.json
+            # 完成配置文件
+            cat <<EOF >> /etc/xray/serve.json
     ],
     "routing": {
         "balancers": [{
@@ -454,27 +455,7 @@ cat <<EOF >> /etc/xray/serve.json
     }
 }
 EOF
-
-    # 验证配置
-    echo -e "${YELLOW}验证配置文件...${NC}"
-    if ! /usr/local/bin/xray -test -config /etc/xray/serve.json; then
-        echo -e "${RED}配置验证失败，配置文件内容：${NC}"
-        cat /etc/xray/serve.json
-        return 1
-    fi
-
-    # 重启 Xray 服务
-    systemctl restart xray
-    sleep 2
-
-    if ! systemctl is-active --quiet xray; then
-        echo -e "${RED}Xray 服务启动失败${NC}"
-        systemctl status xray
-        return 1
-    fi
-
-    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
-    ;;
+            ;;
 
         4)  # IPv4进，第一个端口对应原IPv4，从第二个端口开始对应IPv6
             cat <<EOF > /etc/xray/serve.json
@@ -641,6 +622,7 @@ EOF
 }
 EOF
             ;;
+            
         *)
             echo -e "${RED}无效的策略选择${NC}"
             return 1
@@ -665,6 +647,7 @@ EOF
 
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
 }
+
 
 #配置IP进出策略
 set_ip_strategy() {
@@ -745,6 +728,9 @@ set_ip_strategy() {
             ;;
     esac
 }
+
+
+
 
 # 代理列表生成
 generate_proxy_list() {
