@@ -323,37 +323,37 @@ generate_random_hex() {
 get_main_interface() {
     MAIN_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
     if [ -z "$MAIN_INTERFACE" ]; then
-        log_message "ERROR" "无法检测到主网卡"
+        echo -e "${RED}错误: 无法检测到主网卡${NC}"
         return 1
     fi
-    log_message "INFO" "检测到主网卡: $MAIN_INTERFACE"
     echo $MAIN_INTERFACE
 }
 
 get_ipv6_prefix() {
     local interface=$1
-    
+
     # 获取非本地IPv6地址
     local current_ipv6=$(ip -6 addr show dev $interface | grep "scope global" | grep -v "temporary" | head -n1 | awk '{print $2}')
-    
+
     if [ -z "$current_ipv6" ]; then
-        log_message "ERROR" "未检测到IPv6地址"
+        echo -e "${RED}错误: 未检测到IPv6地址${NC}" >&2
         return 1
     fi
-    
+
     # 从CIDR格式中提取地址部分
     local ipv6_addr=$(echo "$current_ipv6" | cut -d'/' -f1)
-    
+
     # 提取前缀（前64位）
     local prefix=$(echo "$ipv6_addr" | sed -E 's/:[^:]+:[^:]+:[^:]+:[^:]+$/::/')
-    
+
     if [ -z "$prefix" ]; then
-        log_message "ERROR" "无法提取IPv6前缀"
+        echo -e "${RED}错误: 无法提取IPv6前缀${NC}" >&2
         return 1
     fi
-    
+
     echo "$prefix"
 }
+
 
 add_ipv6_addresses() {
     local interface=$1
