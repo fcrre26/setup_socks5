@@ -296,36 +296,96 @@ configure_ip_strategy() {
 
     case $strategy in
         1)  # 同IP进同IP出
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                cat <<EOF >> /etc/xray/serve.json
-[[inbounds]]
-listen = "$ipv4"
-port = $socks_port
-protocol = "socks"
-tag = "in_$ipv4"
-[inbounds.settings]
-auth = "password"
-udp = true
-ip = "$ipv4"
-[[inbounds.settings.accounts]]
-user = "$socks_user"
-pass = "$socks_pass"
-
-[[outbounds]]
-protocol = "freedom"
-tag = "out_$ipv4"
-settings = { domainStrategy = "UseIPv4" }
-streamSettings = { sockopt = { mark = 255 } }
-sendThrough = "$ipv4"
-
-[[routing.rules]]
-type = "field"
-inboundTag = ["in_$ipv4"]
-outboundTag = "out_$ipv4"
-
+1)  # 同IP进同IP出
+        cat <<EOF > /etc/xray/serve.json
+{
+    "inbounds": [
 EOF
-            done
-            ;;
+        
+        # 首先写入所有入站配置
+        first_inbound=true
+        for ipv4 in "${ipv4_addrs[@]}"; do
+            if [ "$first_inbound" = true ]; then
+                first_inbound=false
+            else
+                echo "," >> /etc/xray/serve.json
+            fi
+            
+            cat <<EOF >> /etc/xray/serve.json
+        {
+            "listen": "$ipv4",
+            "port": $socks_port,
+            "protocol": "socks",
+            "tag": "in_$ipv4",
+            "settings": {
+                "auth": "password",
+                "udp": true,
+                "ip": "$ipv4",
+                "accounts": [{
+                    "user": "$socks_user",
+                    "pass": "$socks_pass"
+                }]
+            }
+        }
+EOF
+        done
+
+        # 写入出站配置
+        cat <<EOF >> /etc/xray/serve.json
+    ],
+    "outbounds": [
+EOF
+
+        first_outbound=true
+        for ipv4 in "${ipv4_addrs[@]}"; do
+            if [ "$first_outbound" = true ]; then
+                first_outbound=false
+            else
+                echo "," >> /etc/xray/serve.json
+            fi
+            
+            cat <<EOF >> /etc/xray/serve.json
+        {
+            "protocol": "freedom",
+            "tag": "out_$ipv4",
+            "settings": { "domainStrategy": "UseIPv4" },
+            "streamSettings": { "sockopt": { "mark": 255 } },
+            "sendThrough": "$ipv4"
+        }
+EOF
+        done
+
+        # 写入路由规则
+        cat <<EOF >> /etc/xray/serve.json
+    ],
+    "routing": {
+        "rules": [
+EOF
+
+        first_rule=true
+        for ipv4 in "${ipv4_addrs[@]}"; do
+            if [ "$first_rule" = true ]; then
+                first_rule=false
+            else
+                echo "," >> /etc/xray/serve.json
+            fi
+            
+            cat <<EOF >> /etc/xray/serve.json
+            {
+                "type": "field",
+                "inboundTag": ["in_$ipv4"],
+                "outboundTag": "out_$ipv4"
+            }
+EOF
+        done
+
+        # 完成配置文件
+        cat <<EOF >> /etc/xray/serve.json
+        ]
+    }
+}
+EOF
+        ;;
         
         2)  # IPv4进随机IPv4出
             # 首先写入所有入站配置
