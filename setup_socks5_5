@@ -511,7 +511,7 @@ set_ip_strategy() {
     log_message "INFO" "配置IP策略..."
     
     echo -e "\n${YELLOW}可用的IP策略：${NC}"
-    echo "1. 同IP进,同IP出"
+    echo "1. 同IP进，同IP出"
     echo "2. IPv4进，随机IPv4出"
     echo "3. IPv4进，随机IPv6出"
     echo "4. IPv4进，不同端口对应固定IPv6出"
