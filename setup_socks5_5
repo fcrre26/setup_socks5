@@ -536,88 +536,6 @@ EOF
     "outbounds": [
 EOF
 
-# 在configure_ip_strategy函数中修改case语句的策略4部分
-
-        4)  # IPv4进，第一个端口对应原IPv4，从第二个端口开始对应IPv6
-            cat <<EOF > /etc/xray/serve.json
-{
-    "inbounds": [
-EOF
-
-            # 获取IPv4和IPv6地址
-            local ipv4_addrs=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
-            local ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
-            
-            # 检查IPv6地址数量
-            if [ ${#ipv6_addrs[@]} -eq 0 ]; then
-                echo -e "${RED}错误：没有可用的IPv6地址${NC}"
-                return 1
-            fi
-
-            # 为每个IPv4配置入站
-            first_inbound=true
-            port_counter=0
-            
-            # 第一个端口 - 使用IPv4
-            for ipv4 in "${ipv4_addrs[@]}"; do
-                if [ "$first_inbound" = true ]; then
-                    first_inbound=false
-                else
-                    echo "," >> /etc/xray/serve.json
-                fi
-                
-                cat <<EOF >> /etc/xray/serve.json
-        {
-            "listen": "$ipv4",
-            "port": $socks_port,
-            "protocol": "socks",
-            "tag": "in_${socks_port}_${ipv4}",
-            "settings": {
-                "auth": "password",
-                "udp": true,
-                "ip": "$ipv4",
-                "accounts": [{
-                    "user": "$socks_user",
-                    "pass": "$socks_pass"
-                }]
-            }
-        }
-EOF
-            done
-
-            # 后续端口 - 使用IPv6
-            for ((i=0; i<${#ipv6_addrs[@]}; i++)); do
-                current_port=$((socks_port + i + 1))
-                ipv6=${ipv6_addrs[$i]}
-                
-                for ipv4 in "${ipv4_addrs[@]}"; do
-                    echo "," >> /etc/xray/serve.json
-                    cat <<EOF >> /etc/xray/serve.json
-        {
-            "listen": "$ipv4",
-            "port": $current_port,
-            "protocol": "socks",
-            "tag": "in_${current_port}_${ipv4}",
-            "settings": {
-                "auth": "password",
-                "udp": true,
-                "ip": "$ipv4",
-                "accounts": [{
-                    "user": "$socks_user",
-                    "pass": "$socks_pass"
-                }]
-            }
-        }
-EOF
-                done
-            done
-
-            # 添加出站配置
-            cat <<EOF >> /etc/xray/serve.json
-    ],
-    "outbounds": [
-EOF
-
             # 第一个端口的出站配置 - 使用IPv4
             first_outbound=true
             for ipv4 in "${ipv4_addrs[@]}"; do
@@ -727,8 +645,8 @@ EOF
     fi
 
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
+    return 0
 }
-
 
 #配置IP进出策略
 set_ip_strategy() {
