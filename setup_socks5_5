@@ -76,6 +76,7 @@ save_config() {
 SOCKS_PORT=$socks_port
 SOCKS_USER=$socks_user
 SOCKS_PASS=$socks_pass
+STRATEGY=$strategy
 EOF
     log_message "INFO" "配置已保存"
 }
@@ -1192,14 +1193,21 @@ generate_proxy_list() {
     # 清空原有内容
     : > /root/proxy_list.txt
     
-    # 获取当前IP策略配置
-    local strategy=$(grep -A1 '"rules":' /etc/xray/serve.json | grep -o '"balancerTag": ".*"' | cut -d'"' -f4)
+    # 从配置文件读取策略
+    source "$CONFIG_FILE"
     
     # 写入新的代理列表
     echo "# 代理服务器列表 - 格式：入口IP:端口:用户名:密码:出口IP" > /root/proxy_list.txt
     
-    case $strategy in
-        "ipv4_balancer")
+    case $STRATEGY in
+        1)
+            echo "# 同IP进出（默认）" >> /root/proxy_list.txt
+            local ips=($(hostname -I))
+            for ip in "${ips[@]}"; do
+                echo "$ip:$socks_port:$socks_user:$socks_pass:$ip" >> /root/proxy_list.txt
+            done
+            ;;
+        2)
             echo "# IPv4进随机IPv4出（不重复直到耗尽）" >> /root/proxy_list.txt
             local ipv4_addrs=($(hostname -I | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}'))
             for ip in "${ipv4_addrs[@]}"; do
@@ -1207,8 +1215,7 @@ generate_proxy_list() {
                 echo "$ip:$socks_port:$socks_user:$socks_pass:$other_ips" >> /root/proxy_list.txt
             done
             ;;
-            
-        "ipv6_balancer")
+        3)
             echo "# IPv4进随机IPv6出（不重复直到耗尽）" >> /root/proxy_list.txt
             local ipv4_addrs=($(hostname -I | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}'))
             local ipv6_addrs=($(hostname -I | grep -oE '([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}'))
@@ -1217,23 +1224,14 @@ generate_proxy_list() {
                 echo "$ip:$socks_port:$socks_user:$socks_pass:$ipv6_list" >> /root/proxy_list.txt
             done
             ;;
-            
-        *)
-            if grep -q "in_[0-9]*_" /etc/xray/serve.json; then
-                echo "# IPv4进固定端口对应固定IPv6出" >> /root/proxy_list.txt
-                local ipv4_addrs=($(hostname -I | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}'))
-                while read -r port ipv6; do
-                    for ip in "${ipv4_addrs[@]}"; do
-                        echo "$ip:$port:$socks_user:$socks_pass:$ipv6" >> /root/proxy_list.txt
-                    done
-                done < <(grep -A5 "sendThrough" /etc/xray/serve.json | grep -B4 "mark.*255" | grep -E '"port"|"sendThrough"' | paste - - | sed -E 's/.*port": ([0-9]+).*sendThrough": "([^"]+).*/\1 \2/')
-            else
-                echo "# 同IP进出（默认）" >> /root/proxy_list.txt
-                local ips=($(hostname -I))
-                for ip in "${ips[@]}"; do
-                    echo "$ip:$socks_port:$socks_user:$socks_pass:$ip" >> /root/proxy_list.txt
+        4)
+            echo "# IPv4进固定端口对应固定IPv6出" >> /root/proxy_list.txt
+            local ipv4_addrs=($(hostname -I | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}'))
+            while read -r port ipv6; do
+                for ip in "${ipv4_addrs[@]}"; do
+                    echo "$ip:$port:$socks_user:$socks_pass:$ipv6" >> /root/proxy_list.txt
                 done
-            fi
+            done < <(grep -A5 "sendThrough" /etc/xray/serve.json | grep -B4 "mark.*255" | grep -E '"port"|"sendThrough"' | paste - - | sed -E 's/.*port": ([0-9]+).*sendThrough": "([^"]+).*/\1 \2/')
             ;;
     esac
     
