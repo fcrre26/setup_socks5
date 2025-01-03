@@ -507,6 +507,54 @@ setup_bandwidth_control() {
 }
 
 # IP策略配置模块
+set_ip_strategy() {
+    log_message "INFO" "配置IP策略..."
+    
+    echo -e "\n${YELLOW}可用的IP策略：${NC}"
+    echo "1. 同IP进同IP出"
+    echo "2. IPv4进随机IPv4出"
+    echo "3. IPv4进随机IPv6出"
+    echo "4. IPv4进，不同端口对应固定IPv6出"
+    
+    read -p "请选择IP策略 [1-4]: " strategy
+    
+    # 获取系统IP地址
+    ipv4_addrs=($(hostname -I | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}'))
+    ipv6_addrs=($(hostname -I | grep -oE '([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}'))
+    
+    # 如果选择策略4，需要配置端口映射
+    declare -A port_map
+    if [ "$strategy" = "4" ]; then
+        read -p "请输入需要的端口数量: " port_count
+        start_port=$socks_port
+        
+        for ((i=0; i<port_count; i++)); do
+            current_port=$((start_port + i))
+            if [ $i -lt ${#ipv6_addrs[@]} ]; then
+                port_map[$current_port]=${ipv6_addrs[$i]}
+                echo "端口 $current_port -> ${ipv6_addrs[$i]}"
+            else
+                log_message "WARN" "IPv6地址不足，跳过端口 $current_port"
+                break
+            fi
+        done
+    fi
+    
+    configure_ip_strategy "$strategy" port_map
+}
+
+# 获取活动IP数量函数
+get_active_ip_count() {
+    local count=$(hostname -I | wc -w)
+    echo $count
+}
+
+# 获取活动网络接口函数
+get_active_interfaces() {
+    interfaces=$(ip link show | grep -E '^[0-9]+:' | grep -v 'lo:' | cut -d: -f2 | tr -d ' ')
+    echo $interfaces
+}
+
 configure_ip_strategy() {
     local strategy=$1
     local -n port_map=$2
@@ -1050,6 +1098,43 @@ clear_proxy_rules() {
     log_message "INFO" "已清除所有代理规则，回到未安装SOCKS5代理的状态"
     return 0
 }
+# 添加在 clear_proxy_rules() 函数之后
+ipv6_manager_menu() {
+    echo -e "\n${YELLOW}=== IPv6地址管理 ===${NC}"
+    echo "1. 添加IPv6地址"
+    echo "2. 删除所有IPv6地址"
+    echo "3. 显示当前IPv6地址"
+    echo "4. 返回主菜单"
+
+    read -p "请选择操作 [1-4]: " choice
+    case $choice in
+        1)
+            interface=$(get_main_interface)
+            if [ $? -eq 0 ]; then
+                prefix=$(get_ipv6_prefix "$interface")
+                if [ $? -eq 0 ]; then
+                    read -p "请输入要添加的IPv6地址数量: " num_addresses
+                    add_ipv6_addresses "$interface" "$prefix" "$num_addresses"
+                fi
+            fi
+            ;;
+        2)
+            interface=$(get_main_interface)
+            [ $? -eq 0 ] && delete_all_ipv6 "$interface"
+            ;;
+        3)
+            interface=$(get_main_interface)
+            [ $? -eq 0 ] && show_current_ipv6 "$interface"
+            ;;
+        4)
+            return 0
+            ;;
+        *)
+            log_message "ERROR" "无效选项"
+            ;;
+    esac
+}
+
 
 # 主菜单
 show_menu() {
