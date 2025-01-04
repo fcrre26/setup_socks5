@@ -898,37 +898,56 @@ enable_bbr() {
 
 # 测试代理连通性
 test_proxy_connectivity() {
-    echo "测试代理连通性..."
+    echo -e "${YELLOW}开始测试代理连通性...${NC}"
 
     if [ ! -f /root/proxy_list.txt ]; then
-        echo -e "${RED}/root/proxy_list.txt 文件不存在。${NC}"
+        echo -e "${RED}/root/proxy_list.txt 文件不存在${NC}"
         return 1
     fi
 
+    # 统计变量
+    local total=0
+    local success=0
+    local failed=0
+
+    # 读取并测试每个代理
     while IFS= read -r line; do
         if [[ $line =~ ^(.+):([0-9]+):(.+):(.+)$ ]]; then
+            ((total++))
             ip="${BASH_REMATCH[1]}"
             port="${BASH_REMATCH[2]}"
             user="${BASH_REMATCH[3]}"
             pass="${BASH_REMATCH[4]}"
 
-            echo "正在测试 $ip:$port..."
+            echo -e "\n${YELLOW}正在测试 $ip:$port...${NC}"
 
-            if [[ $ip == *:* ]]; then
-                ip="[$ip]"
+            # IPv6地址需要用方括号括起来
+            if [[ $ip =~ ":" ]]; then
+                test_ip="[$ip]"
+            else
+                test_ip="$ip"
             fi
 
-            if curl -s --proxy socks5h://$user:$pass@$ip:$port http://httpbin.org/ip -o /dev/null; then
-                echo -e "${GREEN}$ip:$port 代理连接成功${NC}"
+            # 使用curl测试代理
+            if timeout 10 curl -s --proxy socks5h://$user:$pass@$test_ip:$port https://api.ipify.org -o /dev/null; then
+                echo -e "${GREEN}✓ $ip:$port 连接成功${NC}"
+                ((success++))
             else
-                echo -e "${RED}$ip:$port 代理连接失败${NC}"
+                echo -e "${RED}✗ $ip:$port 连接失败${NC}"
+                ((failed++))
             fi
         else
-            echo -e "${RED}行格式不正确: $line${NC}"
+            echo -e "${RED}警告：发现无效的代理格式：$line${NC}"
         fi
     done < /root/proxy_list.txt
 
-    echo "代理连通性测试完成。"
+    # 显示测试统计
+    echo -e "\n${YELLOW}测试结果统计：${NC}"
+    echo -e "总代理数量: ${total}"
+    echo -e "${GREEN}连接成功: ${success}${NC}"
+    echo -e "${RED}连接失败: ${failed}${NC}"
+    echo -e "成功率: $(( (success * 100) / total ))%"
+
     return 0
 }
 
