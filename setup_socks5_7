@@ -1033,37 +1033,154 @@ enable_bbr() {
 
 # 测试代理连通性
 test_proxy_connectivity() {
-    echo "测试代理连通性..."
+    echo -e "${YELLOW}开始并发测试代理连通性...${NC}"
 
     if [ ! -f /root/proxy_list.txt ]; then
-        echo -e "${RED}/root/proxy_list.txt 文件不存在。${NC}"
+        echo -e "${RED}/root/proxy_list.txt 文件不存在${NC}"
         return 1
     fi
 
-    while IFS= read -r line; do
-        if [[ $line =~ ^(.+):([0-9]+):(.+):(.+)$ ]]; then
-            ip="${BASH_REMATCH[1]}"
-            port="${BASH_REMATCH[2]}"
-            user="${BASH_REMATCH[3]}"
-            pass="${BASH_REMATCH[4]}"
+    # 计算最佳并发数
+    local cpu_cores=$(nproc)
+    local available_memory=$(free -m | awk '/^Mem:/ {print $7}')
+    local network_speed=$(ethtool eth0 2>/dev/null | grep -i "speed" | awk '{print $2}' | tr -d 'Mb/s')
+    
+    # 基于CPU的并发数
+    local max_by_cpu=$((cpu_cores * 3))
+    
+    # 基于内存的并发数
+    local max_by_memory=$((available_memory / 100))
+    
+    # 基于网络的并发数
+    local max_by_network=50  # 默认值
+    [ ! -z "$network_speed" ] && max_by_network=$((network_speed / 2))
+    
+    # 取三者最小值
+    local max_concurrent=$max_by_cpu
+    [ $max_by_memory -lt $max_concurrent ] && max_concurrent=$max_by_memory
+    [ $max_by_network -lt $max_concurrent ] && max_concurrent=$max_by_network
+    
+    # 确保在合理范围内
+    [ $max_concurrent -lt 5 ] && max_concurrent=5
+    [ $max_concurrent -gt 50 ] && max_concurrent=50
 
-            echo "正在测试 $ip:$port..."
+    echo -e "${YELLOW}系统资源分析：${NC}"
+    echo "CPU核心数: $cpu_cores"
+    echo "可用内存: $available_memory MB"
+    echo "网络速度: ${network_speed:-Unknown} Mbps"
+    echo "并发数: $max_concurrent"
 
-            if [[ $ip == *:* ]]; then
-                ip="[$ip]"
-            fi
+    # 统计变量
+    local total=0
+    local success=0
+    local failed=0
+    
+    # 临时文件
+    local tmp_result="/tmp/proxy_test_result.$$"
+    rm -f "$tmp_result"
+    touch "$tmp_result"
 
-            if curl -s --proxy socks5h://$user:$pass@$ip:$port http://httpbin.org/ip -o /dev/null; then
-                echo -e "${GREEN}$ip:$port 代理连接成功${NC}"
-            else
-                echo -e "${RED}$ip:$port 代理连接失败${NC}"
-            fi
+    # 当前并发数
+    local current_concurrent=0
+    declare -a pids=()
+
+    # 测试单个代理的函数
+    test_single_proxy() {
+        local ip=$1
+        local port=$2
+        local user=$3
+        local pass=$4
+        local index=$5
+
+        # 根据IP类型选择测试参数
+        if [[ $ip =~ ":" ]]; then
+            local test_ip="[$ip]"
+            # 使用多个IPv6测试站点，按顺序尝试
+            local test_urls=(
+                "https://ipv6.lookup.test-ipv6.com/ip/"
+                "https://ipv6.icanhazip.com"
+                "https://v6.ident.me"
+            )
         else
-            echo -e "${RED}行格式不正确: $line${NC}"
+            local test_ip="$ip"
+            # IPv4测试站点
+            local test_urls=(
+                "https://api.ipify.org"
+                "https://icanhazip.com"
+                "https://ident.me"
+            )
         fi
+
+        # 依次尝试不同的测试站点
+        for test_url in "${test_urls[@]}"; do
+            if timeout 8 curl -s --max-time 5 \
+                --proxy socks5h://$user:$pass@$test_ip:$port \
+                "$test_url" -o /dev/null &>/dev/null; then
+                echo "$index:$ip:$port:success" >> "$tmp_result"
+                return 0
+            fi
+        done
+        
+        echo "$index:$ip:$port:failed" >> "$tmp_result"
+        return 1
+    }
+
+    # 读取并发起并发测试
+    while IFS=: read -r ip port user pass; do
+        if [ -z "$ip" ] || [ -z "$port" ] || [ -z "$user" ] || [ -z "$pass" ]; then
+            continue
+        fi
+        ((total++))
+
+        # 控制并发数
+        while [ $current_concurrent -ge $max_concurrent ]; do
+            for pid_idx in "${!pids[@]}"; do
+                if ! kill -0 ${pids[$pid_idx]} 2>/dev/null; then
+                    unset pids[$pid_idx]
+                    ((current_concurrent--))
+                fi
+            done
+            sleep 0.1
+        done
+
+        # 启动新的测试进程
+        test_single_proxy "$ip" "$port" "$user" "$pass" "$total" &
+        pids+=($!)
+        ((current_concurrent++))
+        
+        echo -e "${YELLOW}启动测试 $total: $ip:$port${NC}"
     done < /root/proxy_list.txt
 
-    echo "代理连通性测试完成。"
+    # 等待所有测试完成
+    echo -e "\n${YELLOW}等待所有测试完成...${NC}"
+    for pid in "${pids[@]}"; do
+        wait $pid 2>/dev/null
+    done
+
+    # 处理并显示结果
+    echo -e "\n${YELLOW}测试结果：${NC}"
+    while IFS=: read -r index ip port result; do
+        if [ "$result" = "success" ]; then
+            echo -e "${GREEN}✓ $ip:$port 连接成功${NC}"
+            ((success++))
+        else
+            echo -e "${RED}✗ $ip:$port 连接失败${NC}"
+            ((failed++))
+        fi
+    done < <(sort -n -t: -k1 "$tmp_result")
+
+    # 清理临时文件
+    rm -f "$tmp_result"
+
+    # 显示统计信息
+    echo -e "\n${YELLOW}测试结果统计：${NC}"
+    echo -e "总代理数量: ${total}"
+    echo -e "${GREEN}连接成功: ${success}${NC}"
+    echo -e "${RED}连接失败: ${failed}${NC}"
+    if [ $total -gt 0 ]; then
+        echo -e "成功率: $(( (success * 100) / total ))%"
+    fi
+
     return 0
 }
 
