@@ -531,7 +531,6 @@ EOF
 }
 
 # 策略4：IPv4进，不同端口对应固定IPv6出
-# ... existing code ...
 generate_config_strategy_4() {
     local -n port_ipv6_map_ref=$1  # 修改这里，使用不同的变量名
     local port_count=$2
