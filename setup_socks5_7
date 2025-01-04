@@ -376,78 +376,74 @@ EOF
 EOF
 }
 
-# 策略2：IPv4进随机IPv4出
+# 策略2：IPv4进随机IPv4出（不重复直到耗尽）
 generate_config_strategy_2() {
-    cat <<EOF > /etc/xray/serve.json
-{
-    "inbounds": [
-EOF
-    
-    # 写入入站配置
-    first_inbound=true
-    for ipv4 in "${ipv4_addrs[@]}"; do
-        if [ "$first_inbound" = true ]; then
-            first_inbound=false
-        else
-            echo "," >> /etc/xray/serve.json
-        fi
-        
-        cat <<EOF >> /etc/xray/serve.json
-        {
-            "listen": "$ipv4",
-            "port": $socks_port,
-            "protocol": "socks",
-            "tag": "in_$ipv4",
-            "settings": {
-                "auth": "password",
-                "udp": true,
-                "ip": "$ipv4",
-                "accounts": [{
-                    "user": "$socks_user",
-                    "pass": "$socks_pass"
-                }]
-            }
-        }
-EOF
+    # 首先生成所有 outbound tags
+    ipv4_shuffled=($(printf "%s\n" "${ipv4_addrs[@]}" | shuf))
+    outbound_tags=()
+    for ipv4 in "${ipv4_shuffled[@]}"; do
+        outbound_tags+=("outbound_$(echo $ipv4 | tr '.:' '_')")
     done
 
-    # 写入出站配置
-    cat <<EOF >> /etc/xray/serve.json
-    ],
+    # 检查是否有可用的 IPv4 地址
+    if [ ${#outbound_tags[@]} -eq 0 ]; then
+        echo -e "${RED}错误：没有可用的IPv4地址${NC}"
+        return 1
+    fi
+
+    cat <<EOF > /etc/xray/serve.json
+{
+    "inbounds": [{
+        "listen": "${ipv4_addrs[0]}",
+        "port": $socks_port,
+        "protocol": "socks",
+        "tag": "inbound-ipv4",
+        "settings": {
+            "auth": "password",
+            "udp": true,
+            "accounts": [{"user": "$socks_user", "pass": "$socks_pass"}]
+        }
+    }],
     "outbounds": [
 EOF
 
-    first_outbound=true
-    for ipv4 in "${ipv4_addrs[@]}"; do
-        if [ "$first_outbound" = true ]; then
-            first_outbound=false
+    # 写入出站配置
+    first=true
+    for i in "${!ipv4_shuffled[@]}"; do
+        ipv4=${ipv4_shuffled[$i]}
+        tag=${outbound_tags[$i]}
+        
+        if [ "$first" = true ]; then
+            first=false
         else
-            echo "," >> /etc/xray/serve.json
+            echo "        ," >> /etc/xray/serve.json
         fi
         
         cat <<EOF >> /etc/xray/serve.json
         {
             "protocol": "freedom",
-            "tag": "out_$ipv4",
-            "settings": { "domainStrategy": "UseIPv4" },
-            "streamSettings": { "sockopt": { "mark": 255 } },
+            "tag": "$tag",
+            "settings": {"domainStrategy": "UseIPv4"},
+            "streamSettings": {"sockopt": {"mark": 255}},
             "sendThrough": "$ipv4"
         }
 EOF
     done
 
-    # 写入负载均衡和路由规则
+    # 完成配置文件
     cat <<EOF >> /etc/xray/serve.json
     ],
     "routing": {
         "balancers": [{
             "tag": "ipv4_balancer",
-            "selector": [$(printf '"%s",' $(for ipv4 in "${ipv4_addrs[@]}"; do echo -n "out_$ipv4 "; done) | sed 's/,$//')],
-            "strategy": "random"
+            "selector": [$(printf '"%s",' "${outbound_tags[@]}" | sed 's/,$//')],
+            "strategy": {
+                "type": "random"
+            }
         }],
         "rules": [{
             "type": "field",
-            "inboundTag": [$(printf '"%s",' $(for ipv4 in "${ipv4_addrs[@]}"; do echo -n "in_$ipv4 "; done) | sed 's/,$//')],
+            "inboundTag": ["inbound-ipv4"],
             "balancerTag": "ipv4_balancer"
         }]
     }
