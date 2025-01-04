@@ -790,13 +790,129 @@ generate_proxy_list() {
     local socks_port=$1
     local socks_user=$2
     local socks_pass=$3
-    local ips=($(hostname -I))
-    echo "生成代理列表文件..."
-    echo -n "" > /root/proxy_list.txt
-    for ip in "${ips[@]}"; do
-        echo "$ip:$socks_port:$socks_user:$socks_pass" >> /root/proxy_list.txt
-    done
-    echo "代理列表文件已生成：/root/proxy_list.txt"
+    local strategy=$4
+    local port_count=$5
+    local output_file="/root/proxy_list.txt"
+    local temp_file="/tmp/proxy_list.tmp"
+    
+    echo -e "${YELLOW}开始生成代理列表...${NC}"
+    echo -n "" > "$temp_file"
+
+    # 策略说明
+    local strategy_desc=""
+    case $strategy in
+        1) strategy_desc="同IP进出";;
+        2) strategy_desc="IPv4进随机IPv4出";;
+        3) strategy_desc="IPv4进随机IPv6出";;
+        4) strategy_desc="IPv4进固定IPv6出";;
+        *) strategy_desc="未知策略";;
+    esac
+
+    echo -e "${GREEN}当前策略：${strategy_desc}${NC}"
+
+    # 根据不同策略生成代理列表
+    case $strategy in
+        1)  # 同IP进出
+            echo -e "${YELLOW}生成同IP进出代理列表...${NC}"
+            for ip in "${ipv4_addrs[@]}"; do
+                echo "$ip:$socks_port:$socks_user:$socks_pass" >> "$temp_file"
+                echo -e "${GREEN}添加代理: $ip:$socks_port${NC}"
+            done
+            ;;
+            
+        2|3)  # IPv4进随机出（IPv4或IPv6）
+            echo -e "${YELLOW}生成随机出站代理列表...${NC}"
+            # 只使用第一个IPv4地址作为入站
+            echo "${ipv4_addrs[0]}:$socks_port:$socks_user:$socks_pass" >> "$temp_file"
+            echo -e "${GREEN}添加代理: ${ipv4_addrs[0]}:$socks_port${NC}"
+            
+            # 显示可用的出站地址
+            if [ "$strategy" = "2" ]; then
+                echo -e "${YELLOW}可用随机IPv4出站地址:${NC}"
+                for ip in "${ipv4_addrs[@]:1}"; do
+                    echo -e "${GREEN}-> $ip${NC}"
+                done
+            elif [ "$strategy" = "3" ]; then
+                echo -e "${YELLOW}可用随机IPv6出站地址:${NC}"
+                for ip in "${ipv6_addrs[@]}"; do
+                    echo -e "${GREEN}-> $ip${NC}"
+                done
+            fi
+            ;;
+            
+        4)  # 多端口固定IPv6
+            echo -e "${YELLOW}生成多端口固定IPv6出站代理列表...${NC}"
+            local port_ipv6_count=0
+            for ip in "${ipv4_addrs[@]}"; do
+                for ((i=0; i<port_count; i++)); do
+                    current_port=$((socks_port + i))
+                    echo "$ip:$current_port:$socks_user:$socks_pass" >> "$temp_file"
+                    echo -e "${GREEN}添加代理: $ip:$current_port${NC}"
+                    ((port_ipv6_count++))
+                done
+            done
+            echo -e "${YELLOW}已配置 $port_ipv6_count 个端口与IPv6的映射${NC}"
+            ;;
+            
+        *)
+            echo -e "${RED}错误：无效的策略${NC}"
+            rm -f "$temp_file"
+            return 1
+            ;;
+    esac
+
+    # 检查是否有代理生成
+    if [ ! -s "$temp_file" ]; then
+        echo -e "${RED}错误：未能生成任何代理地址${NC}"
+        rm -f "$temp_file"
+        return 1
+    fi
+
+    # 移动到最终位置
+    mv "$temp_file" "$output_file"
+
+    # 显示结果统计
+    echo -e "\n${GREEN}代理列表生成完成：${NC}"
+    echo -e "策略类型: ${strategy_desc}"
+    echo -e "代理列表文件：${output_file}"
+    
+    # 显示统计信息
+    local total_count=$(wc -l < "$output_file")
+    echo -e "\n${YELLOW}代理统计信息：${NC}"
+    echo -e "总代理数量: ${total_count}"
+    
+    case $strategy in
+        1)
+            echo -e "IPv4地址数量: ${#ipv4_addrs[@]}"
+            ;;
+        2)
+            echo -e "入站IPv4数量: 1"
+            echo -e "可用出站IPv4数量: $((${#ipv4_addrs[@]} - 1))"
+            ;;
+        3)
+            echo -e "入站IPv4数量: 1"
+            echo -e "可用出站IPv6数量: ${#ipv6_addrs[@]}"
+            ;;
+        4)
+            echo -e "IPv4地址数量: ${#ipv4_addrs[@]}"
+            echo -e "每个IP的端口数量: $port_count"
+            echo -e "可用IPv6地址数量: ${#ipv6_addrs[@]}"
+            ;;
+    esac
+
+    # 显示文件内容预览
+    echo -e "\n${YELLOW}代理列表预览：${NC}"
+    if [ $total_count -gt 10 ]; then
+        echo -e "${GREEN}前5行：${NC}"
+        head -n 5 "$output_file"
+        echo -e "..."
+        echo -e "${GREEN}后5行：${NC}"
+        tail -n 5 "$output_file"
+    else
+        cat "$output_file"
+    fi
+
+    echo -e "\n${GREEN}代理列表生成完成！${NC}"
     return 0
 }
 
