@@ -682,10 +682,9 @@ configure_ip_strategy() {
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
 }
 
-#配置IP进出策略
-# 设置IP策略的主函数
+# 配置IP进出策略
 set_ip_strategy() {
-    echo "配置IP进出策略..."
+    echo -e "${YELLOW}配置IP进出策略...${NC}"
 
     # 如果没有之前设置的信息，先获取
     if [ -z "$socks_port" ] || [ -z "$socks_user" ] || [ -z "$socks_pass" ]; then
@@ -698,10 +697,10 @@ set_ip_strategy() {
     ipv4_addrs=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
     ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
 
-    echo "当前IPv4地址: ${ipv4_addrs[@]}"
-    echo "当前IPv6地址: ${ipv6_addrs[@]}"
+    echo -e "${GREEN}当前IPv4地址: ${ipv4_addrs[@]}${NC}"
+    echo -e "${GREEN}当前IPv6地址: ${ipv6_addrs[@]}${NC}"
 
-    echo "请选择IP进出策略："
+    echo -e "\n${YELLOW}请选择IP进出策略：${NC}"
     echo "1. 同IP进，同IP出（默认）"
     echo "2. IPv4进，随机IPv4出（不重复直到耗尽）"
     echo "3. IPv4进，随机IPv6出（不重复直到耗尽）"
@@ -711,16 +710,17 @@ set_ip_strategy() {
     case $strategy in
         1)  # 同IP进同IP出
             configure_ip_strategy $strategy
+            generate_proxy_list "$socks_port" "$socks_user" "$socks_pass" "$strategy"
             ;;
             
         2)  # IPv4进随机IPv4出
             # 检查IPv4地址数量
-            ipv4_count=${#ipv4_addrs[@]}
-            if [ $ipv4_count -lt 2 ]; then
+            if [ ${#ipv4_addrs[@]} -lt 2 ]; then
                 echo -e "${RED}错误: 至少需要2个IPv4地址才能使用此策略${NC}"
                 return 1
             fi
             configure_ip_strategy $strategy
+            generate_proxy_list "$socks_port" "$socks_user" "$socks_pass" "$strategy"
             ;;
             
         3)  # IPv4进随机IPv6出
@@ -730,6 +730,7 @@ set_ip_strategy() {
                 return 1
             fi
             configure_ip_strategy $strategy
+            generate_proxy_list "$socks_port" "$socks_user" "$socks_pass" "$strategy"
             ;;
             
         4)  # IPv4进，不同端口对应固定IPv6出
@@ -775,6 +776,7 @@ set_ip_strategy() {
             fi
 
             configure_ip_strategy $strategy port_ipv6_map $port_count
+            generate_proxy_list "$socks_port" "$socks_user" "$socks_pass" "$strategy" "$port_count"
             ;;
             
         *)
@@ -782,6 +784,26 @@ set_ip_strategy() {
             return 1
             ;;
     esac
+
+    # 验证配置
+    echo -e "${YELLOW}验证配置文件...${NC}"
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve.json; then
+        echo -e "${RED}配置验证失败${NC}"
+        return 1
+    fi
+
+    # 重启 Xray 服务
+    systemctl restart xray
+    sleep 2
+
+    if ! systemctl is-active --quiet xray; then
+        echo -e "${RED}Xray 服务启动失败${NC}"
+        systemctl status xray
+        return 1
+    fi
+
+    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
+    return 0
 }
 
 
