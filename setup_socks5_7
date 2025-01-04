@@ -1038,7 +1038,7 @@ test_proxy_connectivity() {
     if [ ! -f /root/proxy_list.txt ]; then
         echo -e "${RED}/root/proxy_list.txt 文件不存在${NC}"
         return 1
-    }
+    fi
 
     # 设置固定并发数
     local max_concurrent=20
@@ -1070,38 +1070,22 @@ test_proxy_connectivity() {
         # 根据IP类型选择测试参数
         if [[ $ip =~ ":" ]]; then
             local test_ip="[$ip]"
-            # IPv6测试站点
-            local test_urls=(
-                "http://www.google.com/generate_204"  # 快速测试
-                "https://ipv6.icanhazip.com"          # 备选1
-                "https://v6.ident.me"                 # 备选2
-                "https://api6.ipify.org"              # 备选3
-            )
             local ip_type="ipv6"
+            local test_url="http://www.google.com/generate_204"
         else
             local test_ip="$ip"
-            # IPv4测试站点
-            local test_urls=(
-                "http://www.google.com/generate_204"  # 快速测试
-                "https://api.ipify.org"               # 备选1
-                "https://icanhazip.com"               # 备选2
-                "https://ident.me"                    # 备选3
-            )
             local ip_type="ipv4"
+            local test_url="http://www.google.com/generate_204"
         fi
 
-        # 依次尝试不同的测试站点
-        for test_url in "${test_urls[@]}"; do
-            if timeout 5 curl -s -m 3 --retry 1 --retry-delay 1 \
-                --proxy socks5h://$user:$pass@$test_ip:$port \
-                "$test_url" -o /dev/null &>/dev/null; then
-                echo "$index:$ip:$port:$ip_type:success" >> "$tmp_result"
-                return 0
-            fi
-        done
-        
-        echo "$index:$ip:$port:$ip_type:failed" >> "$tmp_result"
-        return 1
+        # 快速测试连通性
+        if timeout 3 curl -s -m 2 \
+            --proxy socks5h://$user:$pass@$test_ip:$port \
+            $test_url -o /dev/null &>/dev/null; then
+            echo "$index:$ip:$port:$ip_type:success" >> "$tmp_result"
+        else
+            echo "$index:$ip:$port:$ip_type:failed" >> "$tmp_result"
+        fi
     }
 
     # 批量处理代理列表
