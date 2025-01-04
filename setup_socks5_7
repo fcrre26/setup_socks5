@@ -1049,10 +1049,7 @@ test_proxy_connectivity() {
     local total=0
     local success=0
     local failed=0
-    local ipv4_total=0
-    local ipv4_success=0
-    local ipv6_total=0
-    local ipv6_success=0
+
     
     # 临时文件
     local tmp_result="/tmp/proxy_test_result.$$"
@@ -1152,17 +1149,6 @@ test_proxy_connectivity() {
     echo -e "总代理数量: ${total}"
     echo -e "${GREEN}总成功数: ${success}${NC}"
     echo -e "${RED}总失败数: ${failed}${NC}"
-    echo -e "\nIPv4代理统计："
-    echo -e "总数: ${ipv4_total}"
-    echo -e "${GREEN}成功: ${ipv4_success}${NC}"
-    echo -e "${RED}失败: $((ipv4_total - ipv4_success))${NC}"
-    [ $ipv4_total -gt 0 ] && echo -e "成功率: $(( (ipv4_success * 100) / ipv4_total ))%"
-    echo -e "\nIPv6代理统计："
-    echo -e "总数: ${ipv6_total}"
-    echo -e "${GREEN}成功: ${ipv6_success}${NC}"
-    echo -e "${RED}失败: $((ipv6_total - ipv6_success))${NC}"
-    [ $ipv6_total -gt 0 ] && echo -e "成功率: $(( (ipv6_success * 100) / ipv6_total ))%"
-
     return 0
 }
 
