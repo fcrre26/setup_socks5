@@ -897,6 +897,7 @@ enable_bbr() {
 }
 
 # 测试代理连通性
+# 测试代理连通性
 test_proxy_connectivity() {
     echo -e "${YELLOW}开始测试代理连通性...${NC}"
 
@@ -924,13 +925,20 @@ test_proxy_connectivity() {
             # IPv6地址需要用方括号括起来
             if [[ $ip =~ ":" ]]; then
                 test_ip="[$ip]"
+                # IPv6测试网站
+                test_url="https://ipv6.icanhazip.com"
             else
                 test_ip="$ip"
+                # IPv4测试网站
+                test_url="https://ipv4.icanhazip.com"
             fi
 
-            # 使用curl测试代理
-            if timeout 10 curl -s --proxy socks5h://$user:$pass@$test_ip:$port https://api.ipify.org -o /dev/null; then
+            # 使用curl测试代理，增加详细输出
+            if timeout 15 curl -s -v --proxy socks5h://$user:$pass@$test_ip:$port $test_url 2>&1 | grep -q "HTTP/"; then
                 echo -e "${GREEN}✓ $ip:$port 连接成功${NC}"
+                # 显示出口IP（可选）
+                out_ip=$(curl -s --proxy socks5h://$user:$pass@$test_ip:$port $test_url)
+                echo -e "${GREEN}出口IP: $out_ip${NC}"
                 ((success++))
             else
                 echo -e "${RED}✗ $ip:$port 连接失败${NC}"
@@ -946,7 +954,9 @@ test_proxy_connectivity() {
     echo -e "总代理数量: ${total}"
     echo -e "${GREEN}连接成功: ${success}${NC}"
     echo -e "${RED}连接失败: ${failed}${NC}"
-    echo -e "成功率: $(( (success * 100) / total ))%"
+    if [ $total -gt 0 ]; then
+        echo -e "成功率: $(( (success * 100) / total ))%"
+    fi
 
     return 0
 }
