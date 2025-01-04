@@ -531,6 +531,7 @@ EOF
 }
 
 # 策略4：IPv4进，不同端口对应固定IPv6出
+# ... existing code ...
 generate_config_strategy_4() {
     local -n port_ipv6_map_ref=$1  # 修改这里，使用不同的变量名
     local port_count=$2
@@ -821,12 +822,8 @@ set_socks5_credentials() {
     read -p "请输入密码 (默认: $default_pass): " socks_pass
     socks_pass=${socks_pass:-$default_pass}  # 如果用户没有输入，使用默认值
 
-    # 调用 set_ip_strategy 设置策略
     set_ip_strategy
-    
-    # 删除这行，因为 set_ip_strategy 已经会调用 generate_proxy_list
-    # generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
-    
+    generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
     echo "SOCKS5端口、用户名和密码设置完成。"
     return 0
 }
@@ -901,67 +898,38 @@ enable_bbr() {
 }
 
 # 测试代理连通性
-# 测试代理连通性
 test_proxy_connectivity() {
-    echo -e "${YELLOW}开始测试代理连通性...${NC}"
+    echo "测试代理连通性..."
 
     if [ ! -f /root/proxy_list.txt ]; then
-        echo -e "${RED}/root/proxy_list.txt 文件不存在${NC}"
+        echo -e "${RED}/root/proxy_list.txt 文件不存在。${NC}"
         return 1
     fi
 
-    # 统计变量
-    local total=0
-    local success=0
-    local failed=0
-
-    # 读取并测试每个代理
     while IFS= read -r line; do
         if [[ $line =~ ^(.+):([0-9]+):(.+):(.+)$ ]]; then
-            ((total++))
             ip="${BASH_REMATCH[1]}"
             port="${BASH_REMATCH[2]}"
             user="${BASH_REMATCH[3]}"
             pass="${BASH_REMATCH[4]}"
 
-            echo -e "\n${YELLOW}正在测试 $ip:$port...${NC}"
+            echo "正在测试 $ip:$port..."
 
-            # IPv6地址需要用方括号括起来
-            if [[ $ip =~ ":" ]]; then
-                test_ip="[$ip]"
-                # IPv6测试网站
-                test_url="https://ipv6.icanhazip.com"
-            else
-                test_ip="$ip"
-                # IPv4测试网站
-                test_url="https://ipv4.icanhazip.com"
+            if [[ $ip == *:* ]]; then
+                ip="[$ip]"
             fi
 
-            # 使用curl测试代理，增加详细输出
-            if timeout 15 curl -s -v --proxy socks5h://$user:$pass@$test_ip:$port $test_url 2>&1 | grep -q "HTTP/"; then
-                echo -e "${GREEN}✓ $ip:$port 连接成功${NC}"
-                # 显示出口IP（可选）
-                out_ip=$(curl -s --proxy socks5h://$user:$pass@$test_ip:$port $test_url)
-                echo -e "${GREEN}出口IP: $out_ip${NC}"
-                ((success++))
+            if curl -s --proxy socks5h://$user:$pass@$ip:$port http://httpbin.org/ip -o /dev/null; then
+                echo -e "${GREEN}$ip:$port 代理连接成功${NC}"
             else
-                echo -e "${RED}✗ $ip:$port 连接失败${NC}"
-                ((failed++))
+                echo -e "${RED}$ip:$port 代理连接失败${NC}"
             fi
         else
-            echo -e "${RED}警告：发现无效的代理格式：$line${NC}"
+            echo -e "${RED}行格式不正确: $line${NC}"
         fi
     done < /root/proxy_list.txt
 
-    # 显示测试统计
-    echo -e "\n${YELLOW}测试结果统计：${NC}"
-    echo -e "总代理数量: ${total}"
-    echo -e "${GREEN}连接成功: ${success}${NC}"
-    echo -e "${RED}连接失败: ${failed}${NC}"
-    if [ $total -gt 0 ]; then
-        echo -e "成功率: $(( (success * 100) / total ))%"
-    fi
-
+    echo "代理连通性测试完成。"
     return 0
 }
 
