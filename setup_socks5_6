@@ -821,8 +821,12 @@ set_socks5_credentials() {
     read -p "请输入密码 (默认: $default_pass): " socks_pass
     socks_pass=${socks_pass:-$default_pass}  # 如果用户没有输入，使用默认值
 
+    # 调用 set_ip_strategy 设置策略
     set_ip_strategy
-    generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
+    
+    # 删除这行，因为 set_ip_strategy 已经会调用 generate_proxy_list
+    # generate_proxy_list "$socks_port" "$socks_user" "$socks_pass"
+    
     echo "SOCKS5端口、用户名和密码设置完成。"
     return 0
 }
