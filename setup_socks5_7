@@ -1115,29 +1115,15 @@ test_proxy_connectivity() {
         wait $pid 2>/dev/null
     done
 
-    # 处理并显示结果
+# 处理并显示结果
     echo -e "\n${YELLOW}测试结果：${NC}"
     while IFS=: read -r index ip port type status; do
-        if [ "$type" = "ipv4" ]; then
-            ((ipv4_total++))
-            if [ "$status" = "success" ]; then
-                echo -e "${GREEN}✓ $ip:$port (IPv4) 连接成功${NC}"
-                ((success++))
-                ((ipv4_success++))
-            else
-                echo -e "${RED}✗ $ip:$port (IPv4) 连接失败${NC}"
-                ((failed++))
-            fi
+        if [ "$status" = "success" ]; then
+            echo -e "${GREEN}✓ $ip:$port 连接成功${NC}"
+            ((success++))
         else
-            ((ipv6_total++))
-            if [ "$status" = "success" ]; then
-                echo -e "${GREEN}✓ $ip:$port (IPv6) 连接成功${NC}"
-                ((success++))
-                ((ipv6_success++))
-            else
-                echo -e "${RED}✗ $ip:$port (IPv6) 连接失败${NC}"
-                ((failed++))
-            fi
+            echo -e "${RED}✗ $ip:$port 连接失败${NC}"
+            ((failed++))
         fi
     done < <(sort -n -t: -k1 "$tmp_result")
 
