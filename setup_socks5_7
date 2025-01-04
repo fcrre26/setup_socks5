@@ -1032,7 +1032,6 @@ enable_bbr() {
 }
 
 # 测试代理连通性
-# 测试代理连通性
 test_proxy_connectivity() {
     echo -e "${YELLOW}开始并发测试代理连通性...${NC}"
 
@@ -1078,7 +1077,7 @@ test_proxy_connectivity() {
                 "https://v6.ident.me"                 # 备选2
                 "https://api6.ipify.org"              # 备选3
             )
-            echo "$index:$ip:$port:ipv6:testing" >> "$tmp_result"
+            local ip_type="ipv6"
         else
             local test_ip="$ip"
             # IPv4测试站点
@@ -1088,7 +1087,7 @@ test_proxy_connectivity() {
                 "https://icanhazip.com"               # 备选2
                 "https://ident.me"                    # 备选3
             )
-            echo "$index:$ip:$port:ipv4:testing" >> "$tmp_result"
+            local ip_type="ipv4"
         fi
 
         # 依次尝试不同的测试站点
@@ -1096,12 +1095,12 @@ test_proxy_connectivity() {
             if timeout 5 curl -s -m 3 --retry 1 --retry-delay 1 \
                 --proxy socks5h://$user:$pass@$test_ip:$port \
                 "$test_url" -o /dev/null &>/dev/null; then
-                sed -i "s/$index:$ip:$port:[^:]*:testing/$index:$ip:$port:\0:success/" "$tmp_result"
+                echo "$index:$ip:$port:$ip_type:success" >> "$tmp_result"
                 return 0
             fi
         done
         
-        sed -i "s/$index:$ip:$port:[^:]*:testing/$index:$ip:$port:\0:failed/" "$tmp_result"
+        echo "$index:$ip:$port:$ip_type:failed" >> "$tmp_result"
         return 1
     }
 
