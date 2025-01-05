@@ -6,7 +6,7 @@
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m' # 无颜色
 
 # ┌─────────────────────────────────────────────┐
 # │ 使用说明                                   │
@@ -78,74 +78,6 @@ check_and_install_iptables() {
             apt-get update && apt-get install iptables-persistent -y
         fi
     fi
-    return 0
-}
-
-# ┌─────────────────────────────────────────────┐
-# │ 系统检查模块                               │
-# └─────────────────────────────────────────────┘
-check_ipv6() {
-    if ! sysctl -a 2>/dev/null | grep -q "net.ipv6.conf.all.disable_ipv6 = 0"; then
-        echo "启用IPv6支持..."
-        sysctl -w net.ipv6.conf.all.disable_ipv6=0
-        sysctl -w net.ipv6.conf.default.disable_ipv6=0
-        echo "net.ipv6.conf.all.disable_ipv6 = 0" >> /etc/sysctl.conf
-        echo "net.ipv6.conf.default.disable_ipv6 = 0" >> /etc/sysctl.conf
-        sysctl -p
-    fi
-    return 0
-}
-
-# ┌─────────────────────────────────────────────┐
-# │ Xray安装模块                               │
-# └─────────────────────────────────────────────┘
-install_xray() {
-    echo "正在从GitHub下载Xray..."
-    check_and_install_unzip
-    wget --no-check-certificate -O /tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip"
-    unzip /tmp/xray.zip -d /usr/local/bin
-    rm -f /tmp/xray.zip
-    chmod +x /usr/local/bin/xray
-    echo "Xray已下载并设置为可执行。"
-    return 0
-}
-
-# ┌─────────────────────────────────────────────┐
-# │ 环境配置模块                               │
-# └─────────────────────────────────────────────┘
-setup_environment() {
-    echo "设置防火墙规则..."
-    iptables -P INPUT ACCEPT
-    iptables -P FORWARD ACCEPT
-    iptables -P OUTPUT ACCEPT
-    iptables -t nat -F
-    iptables -t mangle -F
-    iptables -F
-    iptables -X
-    iptables-save
-
-    install_xray
-    echo "创建Xray服务文件..."
-    cat <<EOF > /etc/systemd/system/xray.service
-[Unit]
-Description=The Xray Proxy Server
-After=network-online.target
-
-[Service]
-ExecStart=/usr/local/bin/xray -config /etc/xray/serve_combined.json
-ExecStop=/bin/kill -s QUIT \$MAINPID
-Restart=always
-RestartSec=15s
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    echo "启动Xray服务..."
-    $service_manager daemon-reload
-    $service_manager enable xray
-    $service_manager start xray
-    echo "环境配置完成。"
     return 0
 }
 
@@ -280,7 +212,7 @@ delete_all_ipv6() {
         echo -e "${GREEN}已删除配置文件${NC}"
     fi
 
-    for addr in $(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | awk '{print $2}'); do
+    for addr in $(ip -6 addr show dev $interface | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}'); do
         ip -6 addr del $addr dev $interface
         echo -e "${YELLOW}已删除IPv6地址: $addr${NC}"
     done
@@ -302,314 +234,339 @@ show_current_ipv6() {
 # ┌─────────────────────────────────────────────┐
 # │ IP策略配置模块                             │
 # └─────────────────────────────────────────────┘
-generate_config_strategy_1_2() {
-    cat <<EOF > /etc/xray/serve_strategy1_2.json
+generate_config_strategy_1() {
+    # 生成策略1的配置
+    cat <<EOF > /etc/xray/serve_strategy1.json
 {
     "inbounds": [
-EOF
-
-    # 策略1: 同IP进同IP出
-    first_inbound=true
-    for ipv4 in "${ipv4_addrs[@]}"; do
-        if [ "$first_inbound" = true ]; then
-            first_inbound=false
-        else
-            echo "," >> /etc/xray/serve_strategy1_2.json
-        fi
-
-        cat <<EOF >> /etc/xray/serve_strategy1_2.json
         {
-            "listen": "$ipv4",
+            "listen": "${ipv4_addrs[0]}",
             "port": $strategy1_port,
             "protocol": "socks",
-            "tag": "in_$ipv4",
+            "tag": "inbound_strategy1",
             "settings": {
                 "auth": "password",
                 "udp": true,
-                "ip": "$ipv4",
-                "accounts": [{
-                    "user": "$socks_user",
-                    "pass": "$socks_pass"
-                }]
+                "accounts": [
+                    {
+                        "user": "$socks_user",
+                        "pass": "$socks_pass"
+                    }
+                ]
             }
         }
-EOF
-    done
-
-    # 策略2: IPv4进随机IPv4出
-    for ((i=1; i<${#ipv4_addrs[@]}; i++)); do
-        ipv4=${ipv4_addrs[$i]}
-        cat <<EOF >> /etc/xray/serve_strategy1_2.json
-        ,
-        {
-            "listen": "$ipv4",
-            "port": $strategy2_port,
-            "protocol": "socks",
-            "tag": "in_${ipv4}_strategy2",
-            "settings": {
-                "auth": "password",
-                "udp": true,
-                "ip": "$ipv4",
-                "accounts": [{
-                    "user": "$socks_user",
-                    "pass": "$socks_pass"
-                }]
-            }
-        }
-EOF
-    done
-
-    # 写入出站配置
-    cat <<EOF >> /etc/xray/serve_strategy1_2.json
     ],
     "outbounds": [
-EOF
-
-    # 策略1: 同IP出
-    first_outbound=true
-    for ipv4 in "${ipv4_addrs[@]}"; do
-        if [ "$first_outbound" = true ]; then
-            first_outbound=false
-        else
-            echo "," >> /etc/xray/serve_strategy1_2.json
-        fi
-
-        cat <<EOF >> /etc/xray/serve_strategy1_2.json
         {
             "protocol": "freedom",
-            "tag": "out_$ipv4",
-            "settings": { "domainStrategy": "UseIPv4" },
-            "streamSettings": { "sockopt": { "mark": 255 } },
-            "sendThrough": "$ipv4"
+            "tag": "outbound_strategy1",
+            "settings": {
+                "domainStrategy": "UseIPv4"
+            },
+            "streamSettings": {
+                "sockopt": {
+                    "mark": 255
+                }
+            },
+            "sendThrough": "${ipv4_addrs[0]}"
         }
-EOF
-    done
-
-    # 策略2: 随机IPv4出
-    for ((i=1; i<${#ipv4_addrs[@]}; i++)); do
-        ipv4=${ipv4_addrs[$i]}
-        cat <<EOF >> /etc/xray/serve_strategy1_2.json
-        ,
-        {
-            "protocol": "freedom",
-            "tag": "out_${ipv4}_strategy2",
-            "settings": { "domainStrategy": "UseIPv4" },
-            "streamSettings": { "sockopt": { "mark": 255 } },
-            "sendThrough": "$ipv4"
-        }
-EOF
-    done
-
-    # 写入路由规则
-    cat <<EOF >> /etc/xray/serve_strategy1_2.json
     ],
     "routing": {
         "rules": [
-EOF
-
-    # 策略1路由规则
-    first_rule=true
-    for ipv4 in "${ipv4_addrs[@]}"; do
-        if [ "$first_rule" = true ]; then
-            first_rule=false
-        else
-            echo "," >> /etc/xray/serve_strategy1_2.json
-        fi
-
-        cat <<EOF >> /etc/xray/serve_strategy1_2.json
-        {
-            "type": "field",
-            "inboundTag": ["in_$ipv4"],
-            "outboundTag": "out_$ipv4"
-        }
-EOF
-    done
-
-    # 策略2路由规则
-    for ((i=1; i<${#ipv4_addrs[@]}; i++)); do
-        ipv4=${ipv4_addrs[$i]}
-        cat <<EOF >> /etc/xray/serve_strategy1_2.json
-        ,
-        {
-            "type": "field",
-            "inboundTag": ["in_${ipv4}_strategy2"],
-            "outboundTag": "out_${ipv4}_strategy2"
-        }
-EOF
-    done
-
-    # 完成配置文件
-    cat <<EOF >> /etc/xray/serve_strategy1_2.json
+            {
+                "type": "field",
+                "inboundTag": ["inbound_strategy1"],
+                "outboundTag": "outbound_strategy1"
+            }
         ]
     }
 }
 EOF
 }
 
-generate_config_strategy_3_4() {
-    cat <<EOF > /etc/xray/serve_strategy3_4.json
+generate_config_strategy_2() {
+    # 生成策略2的配置（IPv4进，随机IPv4出）
+    cat <<EOF > /etc/xray/serve_strategy2.json
+{
+    "inbounds": [
+        {
+            "listen": "${ipv4_addrs[0]}",
+            "port": $strategy2_port,
+            "protocol": "socks",
+            "tag": "inbound_strategy2",
+            "settings": {
+                "auth": "password",
+                "udp": true,
+                "accounts": [
+                    {
+                        "user": "$socks_user",
+                        "pass": "$socks_pass"
+                    }
+                ]
+            }
+        }
+    ],
+    "outbounds": [
+EOF
+    local first=true
+    for ((i=1; i<${#ipv4_addrs[@]}; i++)); do
+        ipv4=${ipv4_addrs[$i]}
+        tag="outbound_strategy2_$i"
+        if [ "$first" = true ]; then
+            first=false
+        else
+            echo "," >> /etc/xray/serve_strategy2.json
+        fi
+        cat <<EOF >> /etc/xray/serve_strategy2.json
+        {
+            "protocol": "freedom",
+            "tag": "$tag",
+            "settings": {
+                "domainStrategy": "UseIPv4"
+            },
+            "streamSettings": {
+                "sockopt": {
+                    "mark": 255
+                }
+            },
+            "sendThrough": "$ipv4"
+        }
+EOF
+    done
+    cat <<EOF >> /etc/xray/serve_strategy2.json
+    ],
+    "routing": {
+        "balancers": [
+            {
+                "tag": "ipv4_balancer",
+                "selector": [$(printf '"%s",' $(for ((i=1; i<${#ipv4_addrs[@]}; i++)); do echo "outbound_strategy2_$i"; done) | sed 's/,$//')],
+                "strategy": {
+                    "type": "random"
+                }
+            }
+        ],
+        "rules": [
+            {
+                "type": "field",
+                "inboundTag": ["inbound_strategy2"],
+                "balancerTag": "ipv4_balancer"
+            }
+        ]
+    }
+}
+EOF
+}
+
+generate_config_strategy_3() {
+    # 生成策略3的配置（IPv4进，随机IPv6出）
+    cat <<EOF > /etc/xray/serve_strategy3.json
+{
+    "inbounds": [
+        {
+            "listen": "${ipv4_addrs[0]}",
+            "port": $strategy3_port,
+            "protocol": "socks",
+            "tag": "inbound_strategy3",
+            "settings": {
+                "auth": "password",
+                "udp": true,
+                "accounts": [
+                    {
+                        "user": "$socks_user",
+                        "pass": "$socks_pass"
+                    }
+                ]
+            }
+        }
+    ],
+    "outbounds": [
+EOF
+    local first=true
+    for ipv6 in "${ipv6_addrs[@]}"; do
+        tag="outbound_strategy3_$(echo $ipv6 | tr ':.' '_')"
+        if [ "$first" = true ]; then
+            first=false
+        else
+            echo "," >> /etc/xray/serve_strategy3.json
+        fi
+        cat <<EOF >> /etc/xray/serve_strategy3.json
+        {
+            "protocol": "freedom",
+            "tag": "$tag",
+            "settings": {
+                "domainStrategy": "UseIPv6"
+            },
+            "streamSettings": {
+                "sockopt": {
+                    "mark": 255
+                }
+            },
+            "sendThrough": "$ipv6"
+        }
+EOF
+    done
+    cat <<EOF >> /etc/xray/serve_strategy3.json
+    ],
+    "routing": {
+        "balancers": [
+            {
+                "tag": "ipv6_balancer",
+                "selector": [$(printf '"%s",' $(for ipv6 in "${ipv6_addrs[@]}"; do echo "outbound_strategy3_$(echo $ipv6 | tr ':.' '_')"; done) | sed 's/,$//')],
+                "strategy": {
+                    "type": "random"
+                }
+            }
+        ],
+        "rules": [
+            {
+                "type": "field",
+                "inboundTag": ["inbound_strategy3"],
+                "balancerTag": "ipv6_balancer"
+            }
+        ]
+    }
+}
+EOF
+}
+
+generate_config_strategy_4() {
+    local -n port_ipv6_map_ref=$1
+    local port_count=$2
+
+    cat <<EOF > /etc/xray/serve_strategy4.json
 {
     "inbounds": [
 EOF
 
-    # 策略3: IPv4进随机IPv6出
-    for ipv4 in "${ipv4_addrs[@]}"; do
-        cat <<EOF >> /etc/xray/serve_strategy3_4.json
-        {
-            "listen": "$ipv4",
-            "port": $strategy3_port,
-            "protocol": "socks",
-            "tag": "in_${ipv4}_strategy3",
-            "settings": {
-                "auth": "password",
-                "udp": true,
-                "ip": "$ipv4",
-                "accounts": [{
-                    "user": "$socks_user",
-                    "pass": "$socks_pass"
-                }]
-            }
-        },
-EOF
-    done
-
-    # 策略4: IPv4进不同端口对应固定IPv6出
+    # 配置入站
+    first_inbound=true
     for ((i=0; i<port_count; i++)); do
-        current_port=$((strategy4_start_port + i))
-        ipv6=${port_ipv6_map[$current_port]}
+        current_port=$((socks_port + i))
         for ipv4 in "${ipv4_addrs[@]}"; do
-            cat <<EOF >> /etc/xray/serve_strategy3_4.json
+            if [ "$first_inbound" = true ]; then
+                first_inbound=false
+            else
+                echo "," >> /etc/xray/serve_strategy4.json
+            fi
+
+            cat <<EOF >> /etc/xray/serve_strategy4.json
         {
             "listen": "$ipv4",
             "port": $current_port,
             "protocol": "socks",
-            "tag": "in_${current_port}_${ipv4}_strategy4",
+            "tag": "in_${current_port}_${ipv4}",
             "settings": {
                 "auth": "password",
                 "udp": true,
-                "ip": "$ipv4",
                 "accounts": [{
                     "user": "$socks_user",
                     "pass": "$socks_pass"
                 }]
             }
-        },
+        }
 EOF
         done
     done
 
-    # 移除最后一个逗号
-    sed -i '$ s/,$//' /etc/xray/serve_strategy3_4.json
-
-    # 写入出站配置
-    cat <<EOF >> /etc/xray/serve_strategy3_4.json
+    # 添加出站配置
+    cat <<EOF >> /etc/xray/serve_strategy4.json
     ],
     "outbounds": [
 EOF
 
-    # 策略3: 随机IPv6出
     first_outbound=true
-    for ipv6 in "${ipv6_addrs[@]}"; do
+    for ((i=0; i<port_count; i++)); do
+        current_port=$((socks_port + i))
+        current_ipv6="${port_ipv6_map_ref[$current_port]}"
+
         if [ "$first_outbound" = true ]; then
             first_outbound=false
         else
-            echo "," >> /etc/xray/serve_strategy3_4.json
+            echo "," >> /etc/xray/serve_strategy4.json
         fi
 
-        cat <<EOF >> /etc/xray/serve_strategy3_4.json
+        cat <<EOF >> /etc/xray/serve_strategy4.json
         {
             "protocol": "freedom",
-            "tag": "out_${ipv6}_strategy3",
+            "tag": "out_$current_port",
             "settings": { "domainStrategy": "UseIPv6" },
             "streamSettings": { "sockopt": { "mark": 255 } },
-            "sendThrough": "$ipv6"
+            "sendThrough": "$current_ipv6"
         }
 EOF
     done
 
-    # 策略4: 固定IPv6出
-    for ((i=0; i<port_count; i++)); do
-        current_port=$((strategy4_start_port + i))
-        ipv6=${port_ipv6_map[$current_port]}
-        cat <<EOF >> /etc/xray/serve_strategy3_4.json
-        ,
-        {
-            "protocol": "freedom",
-            "tag": "out_${current_port}_strategy4",
-            "settings": { "domainStrategy": "UseIPv6" },
-            "streamSettings": { "sockopt": { "mark": 255 } },
-            "sendThrough": "$ipv6"
-        }
-EOF
-    done
-
-    # 写入路由规则
-    cat <<EOF >> /etc/xray/serve_strategy3_4.json
+    # 添加路由规则
+    cat <<EOF >> /etc/xray/serve_strategy4.json
     ],
     "routing": {
         "rules": [
 EOF
 
-    # 策略3路由规则
-    for ipv4 in "${ipv4_addrs[@]}"; do
-        cat <<EOF >> /etc/xray/serve_strategy3_4.json
-        {
-            "type": "field",
-            "inboundTag": ["in_${ipv4}_strategy3"],
-            "outboundTag": "out_${ipv6_shuffled[$RANDOM % ${#ipv6_addrs[@]}]}_strategy3"
-        },
-EOF
-    done
-
-    # 策略4路由规则
+    first_rule=true
     for ((i=0; i<port_count; i++)); do
-        current_port=$((strategy4_start_port + i))
+        current_port=$((socks_port + i))
         for ipv4 in "${ipv4_addrs[@]}"; do
-            ipv6=${port_ipv6_map[$current_port]}
-            cat <<EOF >> /etc/xray/serve_strategy3_4.json
-        {
-            "type": "field",
-            "inboundTag": ["in_${current_port}_${ipv4}_strategy4"],
-            "outboundTag": "out_${current_port}_strategy4"
-        },
+            if [ "$first_rule" = true ]; then
+                first_rule=false
+            else
+                echo "," >> /etc/xray/serve_strategy4.json
+            fi
+
+            cat <<EOF >> /etc/xray/serve_strategy4.json
+            {
+                "type": "field",
+                "inboundTag": ["in_${current_port}_${ipv4}"],
+                "outboundTag": "out_$current_port"
+            }
 EOF
         done
     done
 
-    # 移除最后一个逗号
-    sed -i '$ s/,$//' /etc/xray/serve_strategy3_4.json
-
     # 完成配置文件
-    cat <<EOF >> /etc/xray/serve_strategy3_4.json
+    cat <<EOF >> /etc/xray/serve_strategy4.json
         ]
     }
 }
 EOF
 }
 
-# ┌─────────────────────────────────────────────┐
-# │ 主配置函数                                 │
-# └─────────────────────────────────────────────┘
 configure_ip_strategy() {
-    local strategy_group=$1  # "1_2" 或 "3_4"
+    local strategy=$1
+    local -n port_ipv6_map_ref=$2  # 命名空间引用
+    local port_count=$3
 
-    mkdir -p /etc/xray
+    echo "开始配置IP进出策略... 策略 $strategy"
 
-    case "$strategy_group" in
-        "1_2")
-            generate_config_strategy_1_2
+    case $strategy in
+        1)
+            generate_config_strategy_1
             ;;
-        "3_4")
-            generate_config_strategy_3_4
+        2)
+            generate_config_strategy_2
+            ;;
+        3)
+            generate_config_strategy_3
+            ;;
+        4)
+            generate_config_strategy_4 port_ipv6_map_ref $port_count
             ;;
         *)
-            echo -e "${RED}无效的策略组选择${NC}"
+            echo -e "${RED}未知的策略选择${NC}"
             return 1
             ;;
     esac
 
-    # 合并配置文件
-    jq -s '.[0] * .[1]' /etc/xray/serve_strategy1_2.json /etc/xray/serve_strategy3_4.json > /etc/xray/serve_combined.json
+    # 合并配置文件，根据策略
+    if [ "$strategy" -le 3 ]; then
+        jq -s '.[0] * .[1] * .[2]' /etc/xray/serve_strategy1.json /etc/xray/serve_strategy2.json /etc/xray/serve_strategy3.json > /etc/xray/serve_combined.json
+    elif [ "$strategy" -eq 4 ]; then
+        if [ ! -f /etc/xray/serve_combined.json ]; then
+            cp /etc/xray/serve_strategy4.json /etc/xray/serve_combined.json
+        else
+            jq -s '.[0] * .[1]' /etc/xray/serve_combined.json /etc/xray/serve_strategy4.json > /etc/xray/serve_combined.json
+        fi
+    fi
 
     # 验证配置
     echo -e "${YELLOW}验证配置文件...${NC}"
@@ -630,6 +587,11 @@ configure_ip_strategy() {
 
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
     return 0
+}
+
+# 定义 set_ip_strategy 作为 configure_ip_strategy 的别名
+set_ip_strategy() {
+    configure_ip_strategy
 }
 
 # ┌─────────────────────────────────────────────┐
@@ -669,42 +631,38 @@ generate_proxy_list() {
             done
             ;;
             
-        2)  # IPv4进随机IPv4出
+        2|3)  # IPv4进随机出（IPv4或IPv6）
             echo -e "${YELLOW}生成随机出站代理列表...${NC}"
             # 只使用第一个IPv4地址作为入站
             echo "${ipv4_addrs[0]}:$socks_port:$socks_user:$socks_pass" >> "$temp_file"
             echo -e "${GREEN}添加代理: ${ipv4_addrs[0]}:$socks_port${NC}"
             
             # 显示可用的出站地址
-            echo -e "${YELLOW}可用随机IPv4出站地址:${NC}"
-            for ip in "${ipv4_addrs[@]:1}"; do
-                echo -e "${GREEN}-> $ip${NC}"
-            done
+            if [ "$strategy" = "2" ]; then
+                echo -e "${YELLOW}可用随机IPv4出站地址:${NC}"
+                for ip in "${ipv4_addrs[@]:1}"; do
+                    echo -e "${GREEN}-> $ip${NC}"
+                done
+            elif [ "$strategy" = "3" ]; then
+                echo -e "${YELLOW}可用随机IPv6出站地址:${NC}"
+                for ip in "${ipv6_addrs[@]}"; do
+                    echo -e "${GREEN}-> $ip${NC}"
+                done
+            fi
             ;;
             
-        3)  # IPv4进随机IPv6出
-            echo -e "${YELLOW}生成随机出站IPv6代理列表...${NC}"
-            # 使用第一个IPv4地址作为入站
-            echo "${ipv4_addrs[0]}:$strategy3_port:$socks_user:$socks_pass" >> "$temp_file"
-            echo -e "${GREEN}添加代理: ${ipv4_addrs[0]}:$strategy3_port${NC}"
-
-            # 显示可用的出站IPv6地址
-            echo -e "${YELLOW}可用随机IPv6出站地址:${NC}"
-            for ip in "${ipv6_addrs[@]}"; do
-                echo -e "${GREEN}-> $ip${NC}"
-            done
-            ;;
-            
-        4)  # IPv4进固定IPv6出
-            echo -e "${YELLOW}生成固定IPv6出站代理列表...${NC}"
-            for ((i=0; i<port_count; i++)); do
-                current_port=$((strategy4_start_port + i))
-                ipv6=${port_ipv6_map[$current_port]}
-                for ipv4 in "${ipv4_addrs[@]}"; do
-                    echo "$ipv4:$current_port:$socks_user:$socks_pass" >> "$temp_file"
-                    echo -e "${GREEN}添加代理: $ipv4:$current_port${NC}"
+        4)  # 多端口固定IPv6
+            echo -e "${YELLOW}生成多端口固定IPv6出站代理列表...${NC}"
+            local port_ipv6_count=0
+            for ip in "${ipv4_addrs[@]}"; do
+                for ((i=0; i<port_count; i++)); do
+                    current_port=$((socks_port + i))
+                    echo "$ip:$current_port:$socks_user:$socks_pass" >> "$temp_file"
+                    echo -e "${GREEN}添加代理: $ip:$current_port${NC}"
+                    ((port_ipv6_count++))
                 done
             done
+            echo -e "${YELLOW}已配置 $port_ipv6_count 个端口与IPv6的映射${NC}"
             ;;
             
         *)
@@ -770,6 +728,87 @@ generate_proxy_list() {
 }
 
 # ┌─────────────────────────────────────────────┐
+# │ 代理设置模块                               │
+# └─────────────────────────────────────────────┘
+set_socks5_credentials() {
+    # 设置默认值
+    local default_port1=20000
+    local default_user="pnqu4x"
+    local default_pass="zqgzNK3LRS"
+
+    # 提示用户输入，使用默认值作为提示
+    read -p "请输入策略1的SOCKS5起始端口 (默认: $default_port1): " strategy1_port
+    strategy1_port=${strategy1_port:-$default_port1}  # 如果用户没有输入，使用默认值
+
+    read -p "请输入策略2的SOCKS5端口 (默认: $((strategy1_port + 1))): " strategy2_port
+    strategy2_port=${strategy2_port:-$((strategy1_port + 1))}  # 如果用户没有输入，使用默认值
+
+    read -p "请输入策略3的SOCKS5端口 (默认: $((strategy2_port + 1))): " strategy3_port
+    strategy3_port=${strategy3_port:-$((strategy2_port + 1))}  # 如果用户没有输入，使用默认值
+
+    local default_strat4_start_port=$((strategy3_port + 1))
+    read -p "请输入策略4的SOCKS5起始端口 (默认: $default_strat4_start_port): " strategy4_start_port
+    strategy4_start_port=${strategy4_start_port:-$default_strat4_start_port}  # 如果用户没有输入，使用默认值
+
+    # 设置用户名和密码
+    read -p "请输入用户名 (默认: $default_user): " socks_user
+    socks_user=${socks_user:-$default_user}  # 如果用户没有输入，使用默认值
+
+    read -p "请输入密码 (默认: $default_pass): " socks_pass
+    socks_pass=${socks_pass:-$default_pass}  # 如果用户没有输入，使用默认值
+
+    # 获取IPv4和IPv6地址列表 
+    ipv4_addrs=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
+    ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
+
+    echo -e "${GREEN}当前IPv4地址: ${ipv4_addrs[@]}${NC}"
+    echo -e "${GREEN}当前IPv6地址: ${ipv6_addrs[@]}${NC}"
+
+    # 检查是否有足够的IPv6地址
+    local required_ipv6=5
+    if [ ${#ipv6_addrs[@]} -lt $required_ipv6 ]; then
+        echo -e "${RED}错误: IPv6地址不足 $required_ipv6 个，当前有 ${#ipv6_addrs[@]} 个。${NC}"
+        return 1
+    fi
+
+    # 为策略4分配IPv6地址
+    echo -e "${YELLOW}为策略4分配IPv6地址...${NC}"
+    declare -gA port_ipv6_map  # 使用 -g 使其成为全局变量
+    for ((i=0; i<5; i++)); do  # 假设策略4最多分配5个端口
+        current_port=$((strategy4_start_port + i))
+        ipv6=${ipv6_addrs[$i]}
+        port_ipv6_map[$current_port]=$ipv6
+        echo -e "${GREEN}端口 $current_port -> IPv6: $ipv6${NC}"
+    done
+
+    read -p "确认使用以上配置？[y/N] " confirm
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}已取消配置${NC}"
+        return 1
+    fi
+
+    # 调用 IP 策略配置函数
+    configure_ip_strategy 4 port_ipv6_map 5
+    # 生成代理列表
+    generate_proxy_list "$strategy4_start_port" "$socks_user" "$socks_pass" 4 5
+}
+
+# ┌─────────────────────────────────────────────┐
+# │ 工具函数                                   │
+# └─────────────────────────────────────────────┘
+get_active_interfaces() {
+    interfaces=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2}')
+    echo "检测到的活动网络接口: $interfaces"
+    return 0
+}
+
+get_active_ip_count() {
+    active_ip_count=$(hostname -I | wc -w)
+    echo "当前活动的IP数量: $active_ip_count"
+    return 0
+}
+
+# ┌─────────────────────────────────────────────┐
 # │ 带宽控制和BBR相关函数                      │
 # └─────────────────────────────────────────────┘
 setup_bandwidth_control() {
@@ -788,7 +827,7 @@ setup_bandwidth_control() {
         return 0
     fi
 
-    local rate=$(echo "${total_bandwidth%M} / $active_ip_count" | bc)Mbit
+    local rate=$(echo "scale=2; ${total_bandwidth%M} / $active_ip_count" | bc)Mbit
 
     echo "INFO: 设置带宽控制..."
     for interface in $interfaces; do
@@ -943,7 +982,7 @@ clear_proxy_rules() {
     echo "清除所有代理规则..."
     $service_manager stop xray
     $service_manager disable xray
-    rm -f /etc/xray/serve_combined.json
+    rm -f /etc/xray/serve_combined.json /etc/xray/serve_strategy1.json /etc/xray/serve_strategy2.json /etc/xray/serve_strategy3.json /etc/xray/serve_strategy4.json
     rm -f /etc/systemd/system/xray.service
     iptables -F
     iptables -X
@@ -1055,7 +1094,7 @@ show_menu() {
         3) ipv6_manager_menu ;;
         4) setup_bandwidth_control ;;
         5) set_socks5_credentials ;;
-        6) configure_ip_strategy ;;  # 更新为新的函数名称
+        6) set_ip_strategy ;;  # 使用别名函数
         7) test_proxy_connectivity ;;
         8) 
             if [ -f /root/proxy_list.txt ]; then
@@ -1098,88 +1137,6 @@ main() {
         show_menu
         sleep 1
     done
-}
-
-# ┌─────────────────────────────────────────────┐
-# │ 设置SOCKS5凭证模块                         │
-# └─────────────────────────────────────────────┘
-set_socks5_credentials() {
-    # 设置默认值
-    local default_port1=20000
-    local default_user="pnqu4x"
-    local default_pass="zqgzNK3LRS"
-
-    # 提示用户输入，使用默认值作为提示
-    read -p "请输入策略1的SOCKS5起始端口 (默认: $default_port1): " strategy1_port
-    strategy1_port=${strategy1_port:-$default_port1}  # 如果用户没有输入，使用默认值
-
-    read -p "请输入策略2的SOCKS5端口 (默认: $((strategy1_port + 1))): " strategy2_port
-    strategy2_port=${strategy2_port:-$((strategy1_port + 1))}  # 如果用户没有输入，使用默认值
-
-    read -p "请输入策略3的SOCKS5端口 (默认: $((strategy2_port + 1))): " strategy3_port
-    strategy3_port=${strategy3_port:-$((strategy2_port + 1))}  # 如果用户没有输入，使用默认值
-
-    local default_strat4_start_port=$((strategy3_port + 1))
-    read -p "请输入策略4的SOCKS5起始端口 (默认: $default_strat4_start_port): " strategy4_start_port
-    strategy4_start_port=${strategy4_start_port:-$default_strat4_start_port}  # 如果用户没有输入，使用默认值
-
-    # 设置用户名和密码
-    read -p "请输入用户名 (默认: $default_user): " socks_user
-    socks_user=${socks_user:-$default_user}  # 如果用户没有输入，使用默认值
-
-    read -p "请输入密码 (默认: $default_pass): " socks_pass
-    socks_pass=${socks_pass:-$default_pass}  # 如果用户没有输入，使用默认值
-
-    # 获取IPv4地址列表 
-    ipv4_addrs=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
-    ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
-
-    echo -e "${GREEN}当前IPv4地址: ${ipv4_addrs[@]}${NC}"
-    echo -e "${GREEN}当前IPv6地址: ${ipv6_addrs[@]}${NC}"
-
-    # 为策略4分配IPv6地址
-    echo -e "${YELLOW}为策略4分配IPv6地址...${NC}"
-    declare -A port_ipv6_map
-    for ((i=0; i<5; i++)); do  # 假设最多5个端口
-        current_port=$((strategy4_start_port + i))
-        ipv6=${ipv6_addrs[$i]}
-        port_ipv6_map[$current_port]=$ipv6
-        echo -e "${GREEN}端口 $current_port -> IPv6: $ipv6${NC}"
-    done
-
-    read -p "确认使用以上配置？[y/N] " confirm
-    if [[ ! $confirm =~ ^[Yy]$ ]]; then
-        echo -e "${YELLOW}已取消配置${NC}"
-        return 1
-    fi
-
-    # 设置IP策略
-    configure_ip_strategy "1_2"
-    configure_ip_strategy "3_4"
-
-    # 生成代理列表
-    generate_proxy_list "$strategy1_port" "$socks_user" "$socks_pass" "1"
-    generate_proxy_list "$strategy2_port" "$socks_user" "$socks_pass" "2"
-    generate_proxy_list "$strategy3_port" "$socks_user" "$socks_pass" "3"
-    generate_proxy_list "$strategy4_start_port" "$socks_user" "$socks_pass" "4" "5"
-
-    echo -e "${GREEN}SOCKS5端口、用户名和密码设置完成。${NC}"
-    return 0
-}
-
-# ┌─────────────────────────────────────────────┐
-# │ 工具函数                                   │
-# └─────────────────────────────────────────────┘
-get_active_interfaces() {
-    interfaces=$(ip -o link show | awk -F': ' '$2 != "lo" {print $2}')
-    echo "检测到的活动网络接口: $interfaces"
-    return 0
-}
-
-get_active_ip_count() {
-    active_ip_count=$(hostname -I | wc -w)
-    echo "当前活动的IP数量: $active_ip_count"
-    return 0
 }
 
 # 运行主程序
