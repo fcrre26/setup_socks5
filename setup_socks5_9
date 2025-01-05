@@ -303,21 +303,21 @@ show_current_ipv6() {
 # │ IP策略配置模块                             │
 # └─────────────────────────────────────────────┘
 generate_config_strategy_1() {
-    cat <<EOF > /etc/xray/serve_strategy1.json
+    cat <<EOF > /etc/xray/serve.json
 {
     "inbounds": [
 EOF
-
+    
     # 首先写入所有入站配置
     first_inbound=true
     for ipv4 in "${ipv4_addrs[@]}"; do
         if [ "$first_inbound" = true ]; then
             first_inbound=false
         else
-            echo "," >> /etc/xray/serve_strategy1.json
+            echo "," >> /etc/xray/serve.json
         fi
         
-        cat <<EOF >> /etc/xray/serve_strategy1.json
+        cat <<EOF >> /etc/xray/serve.json
         {
             "listen": "$ipv4",
             "port": $socks_port,
@@ -337,7 +337,7 @@ EOF
     done
 
     # 写入出站配置
-    cat <<EOF >> /etc/xray/serve_strategy1.json
+    cat <<EOF >> /etc/xray/serve.json
     ],
     "outbounds": [
 EOF
@@ -347,10 +347,10 @@ EOF
         if [ "$first_outbound" = true ]; then
             first_outbound=false
         else
-            echo "," >> /etc/xray/serve_strategy1.json
+            echo "," >> /etc/xray/serve.json
         fi
         
-        cat <<EOF >> /etc/xray/serve_strategy1.json
+        cat <<EOF >> /etc/xray/serve.json
         {
             "protocol": "freedom",
             "tag": "out_$ipv4",
@@ -362,7 +362,7 @@ EOF
     done
 
     # 写入路由规则
-    cat <<EOF >> /etc/xray/serve_strategy1.json
+    cat <<EOF >> /etc/xray/serve.json
     ],
     "routing": {
         "rules": [
@@ -373,10 +373,10 @@ EOF
         if [ "$first_rule" = true ]; then
             first_rule=false
         else
-            echo "," >> /etc/xray/serve_strategy1.json
+            echo "," >> /etc/xray/serve.json
         fi
         
-        cat <<EOF >> /etc/xray/serve_strategy1.json
+        cat <<EOF >> /etc/xray/serve.json
             {
                 "type": "field",
                 "inboundTag": ["in_$ipv4"],
@@ -386,7 +386,7 @@ EOF
     done
 
     # 完成配置文件
-    cat <<EOF >> /etc/xray/serve_strategy1.json
+    cat <<EOF >> /etc/xray/serve.json
         ]
     }
 }
@@ -407,7 +407,7 @@ generate_config_strategy_2() {
         return 1
     fi
 
-    cat <<EOF > /etc/xray/serve_strategy2.json
+    cat <<EOF > /etc/xray/serve.json
 {
     "inbounds": [{
         "listen": "${ipv4_addrs[0]}",
@@ -432,10 +432,10 @@ EOF
         if [ "$first" = true ]; then
             first=false
         else
-            echo "        ," >> /etc/xray/serve_strategy2.json
+            echo "        ," >> /etc/xray/serve.json
         fi
         
-        cat <<EOF >> /etc/xray/serve_strategy2.json
+        cat <<EOF >> /etc/xray/serve.json
         {
             "protocol": "freedom",
             "tag": "$tag",
@@ -447,7 +447,7 @@ EOF
     done
 
     # 完成配置文件
-    cat <<EOF >> /etc/xray/serve_strategy2.json
+    cat <<EOF >> /etc/xray/serve.json
     ],
     "routing": {
         "balancers": [{
@@ -481,7 +481,7 @@ generate_config_strategy_3() {
         return 1
     fi
 
-    cat <<EOF > /etc/xray/serve_strategy3.json
+    cat <<EOF > /etc/xray/serve.json
 {
     "inbounds": [{
         "listen": "${ipv4_addrs[0]}",
@@ -506,10 +506,10 @@ EOF
         if [ "$first" = true ]; then
             first=false
         else
-            echo "        ," >> /etc/xray/serve_strategy3.json
+            echo "        ," >> /etc/xray/serve.json
         fi
         
-        cat <<EOF >> /etc/xray/serve_strategy3.json
+        cat <<EOF >> /etc/xray/serve.json
         {
             "protocol": "freedom",
             "tag": "$tag",
@@ -521,7 +521,7 @@ EOF
     done
 
     # 完成配置文件
-    cat <<EOF >> /etc/xray/serve_strategy3.json
+    cat <<EOF >> /etc/xray/serve.json
     ],
     "routing": {
         "balancers": [{
@@ -545,7 +545,7 @@ generate_config_strategy_4() {
     local -n port_ipv6_map_ref=$1  # 修改这里，使用不同的变量名
     local port_count=$2
 
-    cat <<EOF > /etc/xray/serve_strategy4.json
+    cat <<EOF > /etc/xray/serve.json
 {
     "inbounds": [
 EOF
@@ -558,10 +558,10 @@ EOF
             if [ "$first_inbound" = true ]; then
                 first_inbound=false
             else
-                echo "," >> /etc/xray/serve_strategy4.json
+                echo "," >> /etc/xray/serve.json
             fi
             
-            cat <<EOF >> /etc/xray/serve_strategy4.json
+            cat <<EOF >> /etc/xray/serve.json
         {
             "listen": "$ipv4",
             "port": $current_port,
@@ -582,7 +582,7 @@ EOF
     done
 
     # 添加出站配置
-    cat <<EOF >> /etc/xray/serve_strategy4.json
+    cat <<EOF >> /etc/xray/serve.json
     ],
     "outbounds": [
 EOF
@@ -596,10 +596,10 @@ EOF
         if [ "$first_outbound" = true ]; then
             first_outbound=false
         else
-            echo "," >> /etc/xray/serve_strategy4.json
+            echo "," >> /etc/xray/serve.json
         fi
         
-        cat <<EOF >> /etc/xray/serve_strategy4.json
+        cat <<EOF >> /etc/xray/serve.json
         {
             "protocol": "freedom",
             "tag": "out_$current_port",
@@ -611,7 +611,7 @@ EOF
     done
 
     # 添加路由规则
-    cat <<EOF >> /etc/xray/serve_strategy4.json
+    cat <<EOF >> /etc/xray/serve.json
     ],
     "routing": {
         "rules": [
@@ -625,10 +625,10 @@ EOF
             if [ "$first_rule" = true ]; then
                 first_rule=false
             else
-                echo "," >> /etc/xray/serve_strategy4.json
+                echo "," >> /etc/xray/serve.json
             fi
             
-            cat <<EOF >> /etc/xray/serve_strategy4.json
+            cat <<EOF >> /etc/xray/serve.json
             {
                 "type": "field",
                 "inboundTag": ["in_${current_port}_${ipv4}"],
@@ -639,7 +639,7 @@ EOF
     done
 
     # 完成配置文件
-    cat <<EOF >> /etc/xray/serve_strategy4.json
+    cat <<EOF >> /etc/xray/serve.json
         ]
     }
 }
