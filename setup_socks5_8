@@ -650,36 +650,20 @@ EOF
 # │ 主配置函数                                 │
 # └─────────────────────────────────────────────┘
 configure_ip_strategy() {
-    local strategy=$1
-    
-    mkdir -p /etc/xray
-    
-    case "$strategy" in
-        "1")
-            generate_config_strategy_1
-            ;;
-        "2")
-            generate_config_strategy_2
-            ;;
-        "3")
-            generate_config_strategy_3
-            ;;
-        "4")
-            if [ -z "$2" ] || [ -z "$3" ]; then
-                echo -e "${RED}错误：策略4需要端口映射和端口数量参数${NC}"
-                return 1
-            fi
-            generate_config_strategy_4 "$2" "$3"
-            ;;
-        *)
-            echo -e "${RED}无效的策略选择${NC}"
-            return 1
-            ;;
-    esac
+    echo "开始配置IP进出策略..."
+
+    # 策略1和策略2的配置
+    generate_config_strategy_1_2
+
+    # 策略3和策略4的配置
+    generate_config_strategy_3_4
+
+    # 合并配置文件
+    jq -s '.[0] * .[1]' /etc/xray/serve_strategy1_2.json /etc/xray/serve_strategy3_4.json > /etc/xray/serve_combined.json
 
     # 验证配置
     echo -e "${YELLOW}验证配置文件...${NC}"
-    if ! /usr/local/bin/xray -test -config /etc/xray/serve.json; then
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve_combined.json; then
         echo -e "${RED}配置验证失败${NC}"
         return 1
     fi
@@ -695,7 +679,9 @@ configure_ip_strategy() {
     fi
 
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
+    return 0
 }
+
 
 # ┌─────────────────────────────────────────────┐
 # │ 配置IP进出策略                             │
@@ -961,25 +947,53 @@ generate_proxy_list() {
 # └─────────────────────────────────────────────┘
 set_socks5_credentials() {
     # 设置默认值
-    local default_port=20000
+    local default_port1=20000
     local default_user="pnqu4x"
     local default_pass="zqgzNK3LRS"
 
     # 提示用户输入，使用默认值作为提示
-    read -p "请输入SOCKS5起始端口 (默认: $default_port): " socks_port
-    socks_port=${socks_port:-$default_port}  # 如果用户没有输入，使用默认值
+    read -p "请输入策略1的SOCKS5起始端口 (默认: $default_port1): " strategy1_port
+    strategy1_port=${strategy1_port:-$default_port1}  # 如果用户没有输入，使用默认值
 
+    read -p "请输入策略2的SOCKS5端口 (默认: $((strategy1_port + 1))): " strategy2_port
+    strategy2_port=${strategy2_port:-$((strategy1_port + 1))}  # 如果用户没有输入，使用默认值
+
+    read -p "请输入策略3的SOCKS5端口 (默认: $((strategy2_port + 1))): " strategy3_port
+    strategy3_port=${strategy3_port:-$((strategy2_port + 1))}  # 如果用户没有输入，使用默认值
+
+    local default_strat4_start_port=$((strategy3_port + 1))
+    read -p "请输入策略4的SOCKS5起始端口 (默认: $default_strat4_start_port): " strategy4_start_port
+    strategy4_start_port=${strategy4_start_port:-$default_strat4_start_port}  # 如果用户没有输入，使用默认值
+
+    # 设置用户名和密码
     read -p "请输入用户名 (默认: $default_user): " socks_user
     socks_user=${socks_user:-$default_user}  # 如果用户没有输入，使用默认值
 
     read -p "请输入密码 (默认: $default_pass): " socks_pass
     socks_pass=${socks_pass:-$default_pass}  # 如果用户没有输入，使用默认值
 
-    # 调用 set_ip_strategy 设置策略
-    set_ip_strategy
+    # 获取IPv4地址列表 
+    ipv4_addrs=($(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '^127\.'))
+    ipv6_addrs=($(ip -6 addr show | grep "inet6" | grep -v "fe80" | grep -v "::1" | awk '{print $2}' | cut -d'/' -f1))
 
-    echo -e "${GREEN}SOCKS5端口、用户名和密码设置完成。${NC}"
-    return 0
+    echo -e "${GREEN}当前IPv4地址: ${ipv4_addrs[@]}${NC}"
+    echo -e "${GREEN}当前IPv6地址: ${ipv6_addrs[@]}${NC}"
+
+    # 为策略4分配IPv6地址
+    echo -e "${YELLOW}为策略4分配IPv6地址...${NC}"
+    declare -A port_ipv6_map
+    for ((i=0; i<5; i++)); do  # 假设策略4最多分配5个端口
+        current_port=$((strategy4_start_port + i))
+        ipv6=${ipv6_addrs[$i]}
+        port_ipv6_map[$current_port]=$ipv6
+        echo -e "${GREEN}端口 $current_port -> IPv6: $ipv6${NC}"
+    done
+
+    read -p "确认使用以上配置？[y/N] " confirm
+    if [[ ! $confirm =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}已取消配置${NC}"
+        return 1
+    fi
 }
 
 # ┌─────────────────────────────────────────────┐
@@ -1261,6 +1275,46 @@ ipv6_manager_menu() {
 }
 
 # ┌─────────────────────────────────────────────┐
+# │ 设置IP进出策略模块                         │
+# └─────────────────────────────────────────────┘
+configure_ip_strategy() {
+    echo "开始配置IP进出策略..."
+    # 此处添加策略1、策略2、策略3、策略4的配置逻辑
+    # 具体实现请参考下面的策略函数定义
+    generate_config_strategy_1_2
+    generate_config_strategy_3_4
+
+    # 合并配置文件
+    jq -s '.[0] * .[1]' /etc/xray/serve_strategy1_2.json /etc/xray/serve_strategy3_4.json > /etc/xray/serve_combined.json
+
+    # 验证配置
+    echo -e "${YELLOW}验证配置文件...${NC}"
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve_combined.json; then
+        echo -e "${RED}配置验证失败${NC}"
+        return 1
+    fi
+
+    # 重启 Xray 服务
+    systemctl restart xray
+    sleep 2
+
+    if ! systemctl is-active --quiet xray; then
+        echo -e "${RED}Xray 服务启动失败${NC}"
+        systemctl status xray
+        return 1
+    fi
+
+    echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
+    return 0
+}
+
+# 定义 set_ip_strategy 作为 configure_ip_strategy 的别名
+set_ip_strategy() {
+    configure_ip_strategy
+}
+
+
+# ┌─────────────────────────────────────────────┐
 # │ 主菜单                                     │
 # └─────────────────────────────────────────────┘
 show_menu() {
@@ -1283,7 +1337,7 @@ show_menu() {
         3) ipv6_manager_menu ;;
         4) setup_bandwidth_control ;;
         5) set_socks5_credentials ;;
-        6) set_ip_strategy ;;
+        6) configure_ip_strategy ;;  # 更新为新的函数名称
         7) test_proxy_connectivity ;;
         8) 
             if [ -f /root/proxy_list.txt ]; then
