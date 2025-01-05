@@ -1169,7 +1169,7 @@ show_menu() {
         3) ipv6_manager_menu ;;
         4) setup_bandwidth_control ;;
         5) set_socks5_credentials ;;
-        6) set_ip_strategy ;;
+        6)execute_ip_strategy ;;  
         7) test_proxy_connectivity ;;
         8) 
             if [ -f /root/proxy_list.txt ]; then
