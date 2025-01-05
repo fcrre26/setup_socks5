@@ -863,6 +863,116 @@ EOF
     return 0
 }
 
+# 设置IP策略
+set_ip_strategy() {
+    # 检查是否已设置凭据，如果没有则设置
+    if [ -z "$socks_user" ] || [ -z "$socks_pass" ]; then
+        echo -e "${YELLOW}未检测到SOCKS5凭据，请先设置：${NC}"
+        
+        # 显示默认值
+        echo -e "默认用户名: ${GREEN}$DEFAULT_USER${NC}"
+        echo -e "默认密码: ${GREEN}$DEFAULT_PASS${NC}"
+        
+        # 询问是否使用默认值
+        read -p "是否使用默认凭据？(y/n): " use_default
+        if [[ "$use_default" != "y" ]]; then
+            read -p "请输入用户名 (默认: $DEFAULT_USER): " new_user
+            read -p "请输入密码 (默认: $DEFAULT_PASS): " new_pass
+            
+            # 更新凭据
+            socks_user=${new_user:-$DEFAULT_USER}
+            socks_pass=${new_pass:-$DEFAULT_PASS}
+        else
+            socks_user=$DEFAULT_USER
+            socks_pass=$DEFAULT_PASS
+        fi
+
+        # 保存凭据到文件
+        mkdir -p /etc/xray
+        cat > /etc/xray/config.env <<EOF
+socks_user=$socks_user
+socks_pass=$socks_pass
+EOF
+        echo -e "${GREEN}SOCKS5凭据已保存。${NC}"
+    fi
+
+    # 获取系统IP
+    get_system_ips
+
+    # 显示当前IP信息
+    echo -e "\n${YELLOW}当前系统IP信息：${NC}"
+    echo -e "IPv4地址："
+    for ip in "${ipv4_addrs[@]}"; do
+        echo -e "${GREEN}-> $ip${NC}"
+    done
+    echo -e "\nIPv6地址："
+    for ip in "${ipv6_addrs[@]}"; do
+        echo -e "${GREEN}-> $ip${NC}"
+    done
+
+    # 显示当前使用的凭据
+    echo -e "\n${YELLOW}当前SOCKS5凭据：${NC}"
+    echo -e "用户名: ${GREEN}$socks_user${NC}"
+    echo -e "密码: ${GREEN}$socks_pass${NC}"
+
+    # 选择策略组
+    echo -e "\n${YELLOW}请选择IP策略组：${NC}"
+    echo "1. IPv4策略组（同IP进出 + 随机IPv4出）"
+    echo "2. IPv6策略组（随机IPv6出 + 固定IPv6出）"
+    read -p "请输入选项 [1-2]: " strategy_choice
+
+    # 设置端口
+    case $strategy_choice in
+        1)
+            echo -e "\n${YELLOW}配置IPv4策略组端口：${NC}"
+            read -p "请输入策略1端口(同IP进出): " port1
+            read -p "请输入策略2端口(随机IPv4出): " port2
+            
+            # 验证端口
+            if ! check_port "$port1" || ! check_port "$port2"; then
+                return 1
+            fi
+            
+            generate_xray_config "1,2" "$port1" "$port2" "$socks_user" "$socks_pass"
+            ;;
+        2)
+            echo -e "\n${YELLOW}配置IPv6策略组端口：${NC}"
+            read -p "请输入策略3端口(随机IPv6出): " port1
+            read -p "请输入策略4起始端口(固定IPv6出): " port2
+            read -p "请输入策略4需要的端口数量: " port_count
+            
+            # 验证端口和端口数量
+            if ! check_port "$port1" || ! check_port "$port2"; then
+                return 1
+            fi
+            if [[ ! "$port_count" =~ ^[0-9]+$ ]] || [ "$port_count" -lt 1 ]; then
+                echo -e "${RED}无效的端口数量${NC}"
+                return 1
+            fi
+            
+            generate_xray_config "3,4" "$port1" "$port2" "$socks_user" "$socks_pass" "$port_count"
+            ;;
+        *)
+            echo -e "${RED}无效的选项${NC}"
+            return 1
+            ;;
+    esac
+
+    # 如果配置成功，重启服务
+    if [ $? -eq 0 ]; then
+        echo -e "\n${YELLOW}重启Xray服务...${NC}"
+        systemctl restart xray
+        if systemctl is-active --quiet xray; then
+            echo -e "${GREEN}Xray服务已成功重启${NC}"
+        else
+            echo -e "${RED}Xray服务启动失败${NC}"
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
 # 在脚本启动时加载已保存的凭据
 load_saved_config() {
     if [ -f /etc/xray/config.env ]; then
