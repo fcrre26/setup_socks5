@@ -628,7 +628,7 @@ configure_ip_strategy() {
 }
 
 # ┌─────────────────────────────────────────────┐
-# │ IP进出策略执行                             │
+# │ IP进出策略执行模块                          │
 # └─────────────────────────────────────────────┘
 
 # 全局变量
@@ -651,7 +651,7 @@ get_system_ips() {
 }
 
 # 执行IP策略配置
-execute_ip_strategy() {
+set_ip_strategy() {
     # 获取系统IP
     get_system_ips
 
@@ -666,6 +666,11 @@ execute_ip_strategy() {
         echo -e "${GREEN}-> $ip${NC}"
     done
 
+    # 获取SOCKS5凭据
+    echo -e "\n设置SOCKS5凭据："
+    read -p "请输入用户名: " socks_user
+    read -p "请输入密码: " socks_pass
+
     # 选择策略组
     echo -e "\n请选择IP策略组："
     echo "1. IPv4策略组（同IP进出 + 随机IPv4出）"
@@ -677,14 +682,14 @@ execute_ip_strategy() {
             echo -e "\nIPv4策略组配置："
             read -p "请输入策略1(同IP进出)的端口: " port1
             read -p "请输入策略2(随机IPv4出)的端口: " port2
-            generate_xray_config "1,2" "$port1" "$port2"
+            generate_xray_config "1,2" "$port1" "$port2" "$socks_user" "$socks_pass"
             ;;
         2)
             echo -e "\nIPv6策略组配置："
             read -p "请输入策略3(随机IPv6出)的端口: " port1
             read -p "请输入策略4(固定IPv6出)起始端口: " port2
             read -p "请输入策略4需要的端口数量: " port_count
-            generate_xray_config "3,4" "$port1" "$port2" "$port_count"
+            generate_xray_config "3,4" "$port1" "$port2" "$socks_user" "$socks_pass" "$port_count"
             ;;
         *)
             echo -e "${RED}无效的选项${NC}"
@@ -709,7 +714,12 @@ generate_xray_config() {
     local strategy_group=$1
     local port1=$2
     local port2=$3
-    local port_count=${4:-1}
+    local socks_user=$4
+    local socks_pass=$5
+    local port_count=${6:-1}
+    
+    echo "开始生成代理列表..."
+    echo "当前策略组：$([ "$strategy_group" = "1,2" ] && echo "IPv4策略组（同IP进出 + 随机IPv4出）" || echo "IPv6策略组（随机IPv6出 + 固定IPv6出）")"
     
     # 创建配置目录
     mkdir -p /etc/xray
@@ -809,7 +819,7 @@ EOF
 EOF
 
     # 生成代理列表
-    generate_proxy_list "$strategy_group" "$port1" "$port2" "$port_count"
+    generate_proxy_list "$strategy_group" "$port1" "$port2" "$socks_user" "$socks_pass" "$port_count"
 }
 
 # 生成代理列表
@@ -817,7 +827,9 @@ generate_proxy_list() {
     local strategy_group=$1
     local port1=$2
     local port2=$3
-    local port_count=${4:-1}
+    local socks_user=$4
+    local socks_pass=$5
+    local port_count=${6:-1}
     local output_file="/root/proxy_list.txt"
     
     # 清空旧的代理列表
