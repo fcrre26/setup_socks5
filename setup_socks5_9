@@ -312,29 +312,6 @@ check_port() {
     return 0
 }
 
-# 配置生成前的检查
-pre_config_check() {
-    local strategy_group=$1
-    local port1=$2
-    local port2=$3
-    
-    # 检查端口
-    check_port $port1 || return 1
-    check_port $port2 || return 1
-    
-    # 检查IP地址
-    case $strategy_group in
-        "1,2")
-            [ ${#ipv4_addrs[@]} -eq 0 ] && echo -e "${RED}无可用IPv4地址${NC}" && return 1
-            ;;
-        "3,4")
-            [ ${#ipv6_addrs[@]} -eq 0 ] && echo -e "${RED}无可用IPv6地址${NC}" && return 1
-            ;;
-    esac
-    
-    return 0
-}
-
 # 生成Xray配置
 generate_xray_config() {
     local strategy_group=$1
@@ -344,56 +321,51 @@ generate_xray_config() {
     local socks_pass=$5
     local port_count=${6:-1}
     
-    # 执行前置检查
-    pre_config_check "$strategy_group" "$port1" "$port2" || return 1
-    
     echo -e "${YELLOW}开始生成配置文件...${NC}"
     mkdir -p /etc/xray
     
-    # 开始生成配置
-    cat > /etc/xray/serve.json <<EOF
+    case $strategy_group in
+        "1,2")
+            # 策略1+2：同IP进出 + 随机IPv4出
+            cat > /etc/xray/serve.json <<EOF
 {
     "inbounds": [
 EOF
-
-    case $strategy_group in
-        "1,2")
-            # 策略1：同IP进出
-            local first=true
+            # 首先写入所有入站配置（策略1）
+            first_inbound=true
             for ip in "${ipv4_addrs[@]}"; do
-                if [ "$first" = true ]; then
-                    first=false
+                if [ "$first_inbound" = true ]; then
+                    first_inbound=false
                 else
                     echo "," >> /etc/xray/serve.json
                 fi
+                
                 cat >> /etc/xray/serve.json <<EOF
         {
             "listen": "$ip",
             "port": $port1,
             "protocol": "socks",
-            "tag": "in_${ip}_${port1}",
+            "tag": "in_$ip",
             "settings": {
                 "auth": "password",
                 "udp": true,
-                "accounts": [{"user": "$socks_user", "pass": "$socks_pass"}]
-            },
-            "streamSettings": {
-                "sockopt": {
-                    "mark": 255,
-                    "tproxy": "off"
-                }
+                "ip": "$ip",
+                "accounts": [{
+                    "user": "$socks_user",
+                    "pass": "$socks_pass"
+                }]
             }
         }
 EOF
             done
 
-            # 策略2：随机IPv4出
+            # 添加随机出站入站（策略2）
             cat >> /etc/xray/serve.json <<EOF
         ,{
             "listen": "0.0.0.0",
             "port": $port2,
             "protocol": "socks",
-            "tag": "random_out",
+            "tag": "random_ipv4",
             "settings": {
                 "auth": "password",
                 "udp": true,
@@ -402,55 +374,49 @@ EOF
         }
 EOF
 
-            # 添加出站配置
+            # 写入出站配置
             cat >> /etc/xray/serve.json <<EOF
     ],
     "outbounds": [
 EOF
-            # 为每个IP添加独立的出站
-            first=true
+            first_outbound=true
             for ip in "${ipv4_addrs[@]}"; do
-                if [ "$first" = true ]; then
-                    first=false
+                if [ "$first_outbound" = true ]; then
+                    first_outbound=false
                 else
                     echo "," >> /etc/xray/serve.json
                 fi
+                
                 cat >> /etc/xray/serve.json <<EOF
         {
             "protocol": "freedom",
-            "tag": "out_${ip}",
-            "settings": {
-                "domainStrategy": "UseIPv4"
-            },
-            "streamSettings": {
-                "sockopt": {
-                    "mark": 255
-                }
-            },
+            "tag": "out_$ip",
+            "settings": { "domainStrategy": "UseIPv4" },
+            "streamSettings": { "sockopt": { "mark": 255 } },
             "sendThrough": "$ip"
         }
 EOF
             done
 
-            # 添加路由规则
+            # 写入路由规则
             cat >> /etc/xray/serve.json <<EOF
     ],
     "routing": {
         "rules": [
 EOF
-            # 为每个入站添加对应的出站规则
-            first=true
+            first_rule=true
             for ip in "${ipv4_addrs[@]}"; do
-                if [ "$first" = true ]; then
-                    first=false
+                if [ "$first_rule" = true ]; then
+                    first_rule=false
                 else
                     echo "," >> /etc/xray/serve.json
                 fi
+                
                 cat >> /etc/xray/serve.json <<EOF
             {
                 "type": "field",
-                "inboundTag": ["in_${ip}_${port1}"],
-                "outboundTag": "out_${ip}"
+                "inboundTag": ["in_$ip"],
+                "outboundTag": "out_$ip"
             }
 EOF
             done
@@ -459,7 +425,7 @@ EOF
             cat >> /etc/xray/serve.json <<EOF
             ,{
                 "type": "field",
-                "inboundTag": ["random_out"],
+                "inboundTag": ["random_ipv4"],
                 "balancerTag": "ipv4_balancer"
             }
         ],
@@ -472,14 +438,18 @@ EOF
                 }
             }
         ]
+    }
+}
 EOF
             ;;
-
+            
         "3,4")
-            # 策略3：随机IPv6出
-            cat >> /etc/xray/serve.json <<EOF
+            # 策略3+4：随机IPv6出 + 固定IPv6出
+            cat > /etc/xray/serve.json <<EOF
+{
+    "inbounds": [
         {
-            "listen": "0.0.0.0",
+            "listen": "${ipv4_addrs[0]}",
             "port": $port1,
             "protocol": "socks",
             "tag": "random_ipv6",
@@ -491,7 +461,7 @@ EOF
         }
 EOF
 
-            # 策略4：固定IPv6出（多端口）
+            # 添加固定IPv6出入站
             for ((i=0; i<port_count; i++)); do
                 current_port=$((port2 + i))
                 cat >> /etc/xray/serve.json <<EOF
@@ -509,36 +479,31 @@ EOF
 EOF
             done
 
-            # IPv6出站配置
+            # 写入出站配置
             cat >> /etc/xray/serve.json <<EOF
     ],
     "outbounds": [
 EOF
             first=true
-            for ip in "${ipv6_addrs[@]}"; do
+            for ipv6 in "${ipv6_addrs[@]}"; do
                 if [ "$first" = true ]; then
                     first=false
                 else
                     echo "," >> /etc/xray/serve.json
                 fi
+                
                 cat >> /etc/xray/serve.json <<EOF
         {
             "protocol": "freedom",
-            "tag": "out_${ip}",
-            "settings": {
-                "domainStrategy": "UseIPv6"
-            },
-            "streamSettings": {
-                "sockopt": {
-                    "mark": 255
-                }
-            },
-            "sendThrough": "$ip"
+            "tag": "out_${ipv6}",
+            "settings": {"domainStrategy": "UseIPv6"},
+            "streamSettings": {"sockopt": {"mark": 255}},
+            "sendThrough": "$ipv6"
         }
 EOF
             done
 
-            # IPv6路由规则
+            # 写入路由规则
             cat >> /etc/xray/serve.json <<EOF
     ],
     "routing": {
@@ -550,19 +515,20 @@ EOF
             }
 EOF
 
-            # 固定IPv6出站规则
+            # 添加固定IPv6出站规则
             for ((i=0; i<port_count && i<${#ipv6_addrs[@]}; i++)); do
                 current_port=$((port2 + i))
+                current_ipv6="${ipv6_addrs[$i]}"
                 cat >> /etc/xray/serve.json <<EOF
             ,{
                 "type": "field",
                 "inboundTag": ["fixed_ipv6_${current_port}"],
-                "outboundTag": "out_${ipv6_addrs[$i]}"
+                "outboundTag": "out_${current_ipv6}"
             }
 EOF
             done
 
-            # IPv6负载均衡器
+            # 完成路由配置
             cat >> /etc/xray/serve.json <<EOF
         ],
         "balancers": [
@@ -574,20 +540,24 @@ EOF
                 }
             }
         ]
-EOF
-            ;;
-    esac
-
-    # 完成配置
-    cat >> /etc/xray/serve.json <<EOF
     }
 }
 EOF
+            ;;
+    esac
 
     # 生成代理列表
     generate_proxy_list "$strategy_group" "$port1" "$port2" "$socks_user" "$socks_pass" "$port_count"
     
     echo -e "${GREEN}配置文件生成成功${NC}"
+    
+    # 验证配置文件
+    echo -e "验证配置文件..."
+    if ! /usr/local/bin/xray -test -config /etc/xray/serve.json; then
+        echo -e "${RED}配置文件验证失败${NC}"
+        return 1
+    fi
+    
     return 0
 }
 
