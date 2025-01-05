@@ -822,32 +822,57 @@ generate_proxy_list() {
     return 0
 }
 
-
 # ┌─────────────────────────────────────────────┐
 # │ 代理设置模块                               │
 # └─────────────────────────────────────────────┘
+
+# SOCKS5默认凭据
+DEFAULT_USER="pnqu4x"
+DEFAULT_PASS="zqgzNK3LRS"
+
+# 全局变量
+socks_user=$DEFAULT_USER
+socks_pass=$DEFAULT_PASS
+
+# SOCKS5凭据设置
 set_socks5_credentials() {
-    # 设置默认值
-    local default_port=20000
-    local default_user="pnqu4x"
-    local default_pass="zqgzNK3LRS"
+    # 显示当前凭据
+    echo -e "${YELLOW}当前SOCKS5凭据：${NC}"
+    echo -e "用户名: ${GREEN}$socks_user${NC}"
+    echo -e "密码: ${GREEN}$socks_pass${NC}"
+    
+    # 询问是否需要修改
+    read -p "是否需要修改凭据？(y/n): " change_config
+    if [[ "$change_config" == "y" ]]; then
+        read -p "请输入用户名 (默认: $socks_user): " new_user
+        read -p "请输入密码 (默认: $socks_pass): " new_pass
+        
+        # 更新凭据（如果有输入）
+        socks_user=${new_user:-$socks_user}
+        socks_pass=${new_pass:-$socks_pass}
+    fi
 
-    # 提示用户输入，使用默认值作为提示
-    read -p "请输入SOCKS5起始端口 (默认: $default_port): " socks_port
-    socks_port=${socks_port:-$default_port}  # 如果用户没有输入，使用默认值
+    # 保存凭据到文件
+    mkdir -p /etc/xray
+    cat > /etc/xray/config.env <<EOF
+socks_user=$socks_user
+socks_pass=$socks_pass
+EOF
 
-    read -p "请输入用户名 (默认: $default_user): " socks_user
-    socks_user=${socks_user:-$default_user}  # 如果用户没有输入，使用默认值
-
-    read -p "请输入密码 (默认: $default_pass): " socks_pass
-    socks_pass=${socks_pass:-$default_pass}  # 如果用户没有输入，使用默认值
-
-    # 调用 set_ip_strategy 设置策略
-    set_ip_strategy
-
-    echo -e "${GREEN}SOCKS5端口、用户名和密码设置完成。${NC}"
+    echo -e "${GREEN}SOCKS5凭据已保存。${NC}"
     return 0
 }
+
+# 在脚本启动时加载已保存的凭据
+load_saved_config() {
+    if [ -f /etc/xray/config.env ]; then
+        source /etc/xray/config.env
+    fi
+}
+
+# 启动时加载配置
+load_saved_config
+
 
 # ┌─────────────────────────────────────────────┐
 # │ 工具函数                                   │
