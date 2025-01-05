@@ -726,7 +726,10 @@ set_ip_strategy() {
     echo -e "${GREEN}IP策略设置完成并成功启动服务${NC}"
 }
 
-# 生成代理列表
+
+# ┌─────────────────────────────────────────────┐
+# │ 代理管理模块                               │
+# └─────────────────────────────────────────────┘
 generate_proxy_list() {
     local strategy_group=$1
     local port1=$2
@@ -734,42 +737,6 @@ generate_proxy_list() {
     local socks_user=$4
     local socks_pass=$5
     local port_count=${6:-1}
-    local output_file="/root/proxy_list.txt"
-    
-    # 清空旧的代理列表
-    > "$output_file"
-    
-    case $strategy_group in
-        "1,2")
-            # 策略1：同IP进出
-            for ip in "${ipv4_addrs[@]}"; do
-                echo "$ip:$port1:$socks_user:$socks_pass" >> "$output_file"
-            done
-            # 策略2：随机IPv4出
-            echo "${ipv4_addrs[0]}:$port2:$socks_user:$socks_pass" >> "$output_file"
-            ;;
-            
-        "3,4")
-            # 策略3：随机IPv6出
-            echo "${ipv4_addrs[0]}:$port1:$socks_user:$socks_pass" >> "$output_file"
-            # 策略4：固定IPv6出（多端口）
-            for ((i=0; i<port_count; i++)); do
-                current_port=$((port2 + i))
-                echo "${ipv4_addrs[0]}:$current_port:$socks_user:$socks_pass" >> "$output_file"
-            done
-            ;;
-    esac
-}
-
-
-# ┌─────────────────────────────────────────────┐
-# │ 代理管理模块                               │
-# └─────────────────────────────────────────────┘
-generate_proxy_list() {
-    local strategy_group=$1  # 新增：策略组参数 (1,2 或 3,4)
-    local port1=$2
-    local port2=$3
-    local port_count=$4
     local output_file="/root/proxy_list.txt"
     local temp_file="/tmp/proxy_list.tmp"
     
@@ -1214,7 +1181,7 @@ show_menu() {
         3) ipv6_manager_menu ;;
         4) setup_bandwidth_control ;;
         5) set_socks5_credentials ;;
-        6) execute_ip_strategy ;;  
+        6) set_ip_strategy ;;  
         7) test_proxy_connectivity ;;
         8) 
             if [ -f /root/proxy_list.txt ]; then
