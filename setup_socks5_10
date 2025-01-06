@@ -1557,46 +1557,107 @@ ipv6_manager_menu() {
 }
 
 # ┌─────────────────────────────────────────────┐
-# │ 主菜单                                     │
+# │ 主菜单模块                                 │
 # └─────────────────────────────────────────────┘
+
 show_menu() {
     echo -e "\n${YELLOW}=== 代理服务器管理工具 ===${NC}"
+    echo -e "\n${GREEN}【基础配置】${NC}"
     echo "1. 环境配置（安装必要组件）"
-    echo "2. 启用BBR加速"
-    echo "3. IPv6地址管理"
-    echo "4. 设置带宽控制"
+    
+    echo -e "\n${GREEN}【网络优化】${NC}"
+    echo "2. BBR加速管理"
+    echo "3. 带宽控制管理"
+    
+    echo -e "\n${GREEN}【功能配置】${NC}"
+    echo "4. IPv6地址管理"
     echo "5. SOCKS5代理设置"
     echo "6. 设置IP进出策略"
+    
+    echo -e "\n${GREEN}【监控维护】${NC}"
     echo "7. 测试代理连通性"
     echo "8. 显示代理列表"
     echo "9. 清除所有代理规则"
-    echo "10. 退出"
+    
+    echo -e "\n0. 退出\n"
 
-    read -p "请输入选项 [1-10]: " option
+    read -p "请输入选项 [0-9]: " option
     case $option in
-        1) setup_environment ;;
-        2) enable_bbr ;;
-        3) ipv6_manager_menu ;;
-        4) setup_bandwidth_control ;;
-        5) set_socks5_credentials ;;
-        6) set_ip_strategy ;;  # 这里改为 set_ip_strategy
-        7) test_proxy_connectivity ;;
+        1) 
+            setup_environment 
+            ;;
+        2)
+            bbr_manager_menu
+            ;;
+        3)
+            bandwidth_manager_menu
+            ;;
+        4) 
+            ipv6_manager_menu 
+            ;;
+        5) 
+            set_socks5_credentials 
+            ;;
+        6) 
+            set_ip_strategy 
+            ;;
+        7) 
+            test_proxy_connectivity 
+            ;;
         8)
             if [ -f /root/proxy_list.txt ]; then
+                echo -e "${YELLOW}当前代理列表：${NC}"
                 cat /root/proxy_list.txt
             else
-                echo -e "${RED}/root/proxy_list.txt 文件不存在。${NC}"
+                echo -e "${RED}/root/proxy_list.txt 文件不存在${NC}"
             fi
             ;;
-        9) clear_proxy_rules ;;
-        10) echo "退出脚本。"; exit ;;
-        *) echo -e "${RED}无效选项，请输入1-10之间的数字${NC}" ;;
+        9) 
+            echo -e "${RED}警告：此操作将清除所有代理规则！${NC}"
+            read -p "确定要继续吗？(y/n): " confirm
+            if [[ "$confirm" == "y" ]]; then
+                clear_proxy_rules
+            fi
+            ;;
+        0)
+            echo -e "${GREEN}感谢使用，再见！${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}无效选项，请重新选择${NC}"
+            ;;
     esac
 }
 
-# ┌─────────────────────────────────────────────┐
-# │ 主程序                                     │
-# └─────────────────────────────────────────────┘
+# 带宽控制管理子菜单
+bandwidth_manager_menu() {
+    while true; do
+        echo -e "\n${YELLOW}=== 带宽控制管理 ===${NC}"
+        echo "1. 设置带宽限制"
+        echo "2. 查看当前带宽状态"
+        echo "3. 调整现有限制"
+        echo "4. 停止带宽控制"
+        echo "0. 返回主菜单"
+
+        read -p "请选择操作 [0-4]: " bw_option
+        case $bw_option in
+            1) setup_bandwidth_control ;;
+            2) show_bandwidth_status ;;
+            3) adjust_bandwidth_limits ;;
+            4) 
+                echo -e "${YELLOW}停止带宽控制...${NC}"
+                stop_bandwidth_control
+                ;;
+            0) return ;;
+            *) echo -e "${RED}无效的选择${NC}" ;;
+        esac
+
+        echo -e "\n按回车键继续..."
+        read
+    done
+}
+
+# 主程序入口
 main() {
     # 检查root权限
     if [ "$EUID" -ne 0 ]; then 
@@ -1607,12 +1668,14 @@ main() {
     # 初始化
     detect_system
     if [ $? -ne 0 ]; then
-        echo -e "${RED}系统检测失败，请检查您的操作系统是否受支持。${NC}"
+        echo -e "${RED}系统检测失败，请检查您的操作系统是否受支持${NC}"
         exit 1
     fi
 
+    # 加载必要的模块和配置
     check_and_install_iptables
     check_ipv6
+    load_saved_config
 
     # 显示使用说明
     show_usage
@@ -1623,6 +1686,3 @@ main() {
         sleep 1
     done
 }
-
-# 运行主程序
-main
