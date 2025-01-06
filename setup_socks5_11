@@ -311,41 +311,53 @@ check_port() {
     fi
     return 0
 }
-
 # 生成Xray配置
 generate_xray_config() {
     local strategy_group=$1
-    local port1=$2
-    local port2=$3
+    local socks_port1=$2
+    local socks_port2=$3
     local socks_user=$4
     local socks_pass=$5
-    local port_count=${6:-1}
+    local enable_strategy1=$6
+    local enable_strategy2=$7
+    local enable_vmess=$8
+    local vmess_offset=${9:-1000}
+    local port_count=${10:-1}
+    
+    # 生成UUID（如果启用了Vmess且UUID不存在）
+    local vmess_uuid=""
+    if [[ "$enable_vmess" == "y" ]]; then
+        vmess_uuid=$(cat /proc/sys/kernel/random/uuid)
+        echo -e "${GREEN}已生成Vmess UUID: $vmess_uuid${NC}"
+    fi
     
     echo -e "${YELLOW}开始生成配置文件...${NC}"
     mkdir -p /etc/xray
     
     case $strategy_group in
         "1,2")
-            # 策略1+2：同IP进出 + 随机IPv4出
             cat > /etc/xray/serve.json <<EOF
 {
     "inbounds": [
 EOF
-            # 首先写入所有入站配置（策略1）
             first_inbound=true
-            for ip in "${ipv4_addrs[@]}"; do
-                if [ "$first_inbound" = true ]; then
-                    first_inbound=false
-                else
-                    echo "," >> /etc/xray/serve.json
-                fi
-                
-                cat >> /etc/xray/serve.json <<EOF
+            
+            # 策略1：同IP进出
+            if [[ "$enable_strategy1" == "y" ]]; then
+                for ip in "${ipv4_addrs[@]}"; do
+                    if [ "$first_inbound" = true ]; then
+                        first_inbound=false
+                    else
+                        echo "," >> /etc/xray/serve.json
+                    fi
+                    
+                    # SOCKS5配置
+                    cat >> /etc/xray/serve.json <<EOF
         {
             "listen": "$ip",
-            "port": $port1,
+            "port": $socks_port1,
             "protocol": "socks",
-            "tag": "in_$ip",
+            "tag": "socks_in_$ip",
             "settings": {
                 "auth": "password",
                 "udp": true,
@@ -357,15 +369,44 @@ EOF
             }
         }
 EOF
-            done
-
-            # 添加随机出站入站（策略2）
-            cat >> /etc/xray/serve.json <<EOF
-        ,{
+                    
+                    # Vmess配置（如果启用）
+                    if [[ "$enable_vmess" == "y" ]]; then
+                        echo "," >> /etc/xray/serve.json
+                        cat >> /etc/xray/serve.json <<EOF
+        {
+            "listen": "$ip",
+            "port": $((socks_port1 + vmess_offset)),
+            "protocol": "vmess",
+            "tag": "vmess_in_$ip",
+            "settings": {
+                "clients": [{
+                    "id": "$vmess_uuid",
+                    "alterId": 0
+                }]
+            },
+            "streamSettings": {
+                "network": "tcp"
+            }
+        }
+EOF
+                    fi
+                done
+            fi
+            
+            # 策略2：随机IPv4出
+            if [[ "$enable_strategy2" == "y" ]]; then
+                if [ "$first_inbound" = false ]; then
+                    echo "," >> /etc/xray/serve.json
+                fi
+                
+                # SOCKS5随机出站
+                cat >> /etc/xray/serve.json <<EOF
+        {
             "listen": "0.0.0.0",
-            "port": $port2,
+            "port": $socks_port2,
             "protocol": "socks",
-            "tag": "random_ipv4",
+            "tag": "random_ipv4_socks",
             "settings": {
                 "auth": "password",
                 "udp": true,
@@ -373,6 +414,29 @@ EOF
             }
         }
 EOF
+                
+                # Vmess随机出站（如果启用）
+                if [[ "$enable_vmess" == "y" ]]; then
+                    echo "," >> /etc/xray/serve.json
+                    cat >> /etc/xray/serve.json <<EOF
+        {
+            "listen": "0.0.0.0",
+            "port": $((socks_port2 + vmess_offset)),
+            "protocol": "vmess",
+            "tag": "random_ipv4_vmess",
+            "settings": {
+                "clients": [{
+                    "id": "$vmess_uuid",
+                    "alterId": 0
+                }]
+            },
+            "streamSettings": {
+                "network": "tcp"
+            }
+        }
+EOF
+                fi
+            fi
 
             # 写入出站配置
             cat >> /etc/xray/serve.json <<EOF
@@ -405,29 +469,61 @@ EOF
         "rules": [
 EOF
             first_rule=true
-            for ip in "${ipv4_addrs[@]}"; do
-                if [ "$first_rule" = true ]; then
-                    first_rule=false
-                else
-                    echo "," >> /etc/xray/serve.json
-                fi
-                
-                cat >> /etc/xray/serve.json <<EOF
+
+            # 策略1路由规则
+            if [[ "$enable_strategy1" == "y" ]]; then
+                for ip in "${ipv4_addrs[@]}"; do
+                    if [ "$first_rule" = true ]; then
+                        first_rule=false
+                    else
+                        echo "," >> /etc/xray/serve.json
+                    fi
+                    
+                    cat >> /etc/xray/serve.json <<EOF
             {
                 "type": "field",
-                "inboundTag": ["in_$ip"],
+                "inboundTag": ["socks_in_$ip"],
                 "outboundTag": "out_$ip"
             }
 EOF
-            done
-
-            # 添加随机出站规则
-            cat >> /etc/xray/serve.json <<EOF
+                    if [[ "$enable_vmess" == "y" ]]; then
+                        cat >> /etc/xray/serve.json <<EOF
             ,{
                 "type": "field",
-                "inboundTag": ["random_ipv4"],
+                "inboundTag": ["vmess_in_$ip"],
+                "outboundTag": "out_$ip"
+            }
+EOF
+                    fi
+                done
+            fi
+
+            # 策略2路由规则
+            if [[ "$enable_strategy2" == "y" ]]; then
+                if [ "$first_rule" = false ]; then
+                    echo "," >> /etc/xray/serve.json
+                fi
+                cat >> /etc/xray/serve.json <<EOF
+            {
+                "type": "field",
+                "inboundTag": ["random_ipv4_socks"],
                 "balancerTag": "ipv4_balancer"
             }
+EOF
+                if [[ "$enable_vmess" == "y" ]]; then
+                    cat >> /etc/xray/serve.json <<EOF
+            ,{
+                "type": "field",
+                "inboundTag": ["random_ipv4_vmess"],
+                "balancerTag": "ipv4_balancer"
+            }
+EOF
+                fi
+            fi
+
+            # 添加负载均衡器配置
+            if [[ "$enable_strategy2" == "y" ]]; then
+                cat >> /etc/xray/serve.json <<EOF
         ],
         "balancers": [
             {
@@ -438,21 +534,84 @@ EOF
                 }
             }
         ]
+EOF
+            else
+                cat >> /etc/xray/serve.json <<EOF
+        ]
+EOF
+            fi
+
+            # 完成配置文件
+            cat >> /etc/xray/serve.json <<EOF
     }
 }
 EOF
             ;;
             
         "3,4")
-            # 策略3+4：随机IPv6出 + 固定IPv6出
+            # IPv6策略组配置
             cat > /etc/xray/serve.json <<EOF
 {
     "inbounds": [
+EOF
+            first_inbound=true
+
+            # 策略3：随机IPv6出
+            if [[ "$enable_strategy3" == "y" ]]; then
+                # SOCKS5配置
+                cat >> /etc/xray/serve.json <<EOF
         {
             "listen": "${ipv4_addrs[0]}",
-            "port": $port1,
+            "port": $socks_port1,
             "protocol": "socks",
-            "tag": "random_ipv6",
+            "tag": "random_ipv6_socks",
+            "settings": {
+                "auth": "password",
+                "udp": true,
+                "accounts": [{"user": "$socks_user", "pass": "$socks_pass"}]
+            }
+        }
+EOF
+                first_inbound=false
+
+                # Vmess配置（如果启用）
+                if [[ "$enable_vmess" == "y" ]]; then
+                    cat >> /etc/xray/serve.json <<EOF
+        ,{
+            "listen": "${ipv4_addrs[0]}",
+            "port": $((socks_port1 + vmess_offset)),
+            "protocol": "vmess",
+            "tag": "random_ipv6_vmess",
+            "settings": {
+                "clients": [{
+                    "id": "$vmess_uuid",
+                    "alterId": 0
+                }]
+            },
+            "streamSettings": {
+                "network": "tcp"
+            }
+        }
+EOF
+                fi
+            fi
+
+            # 策略4：固定IPv6出
+            if [[ "$enable_strategy4" == "y" ]]; then
+                for ((i=0; i<port_count; i++)); do
+                    current_port=$((socks_port2 + i))
+                    if [ "$first_inbound" = false ]; then
+                        echo "," >> /etc/xray/serve.json
+                    fi
+                    first_inbound=false
+
+                    # SOCKS5配置
+                    cat >> /etc/xray/serve.json <<EOF
+        {
+            "listen": "${ipv4_addrs[0]}",
+            "port": $current_port,
+            "protocol": "socks",
+            "tag": "fixed_ipv6_socks_$i",
             "settings": {
                 "auth": "password",
                 "udp": true,
@@ -461,33 +620,40 @@ EOF
         }
 EOF
 
-            # 添加固定IPv6出入站
-            for ((i=0; i<port_count; i++)); do
-                current_port=$((port2 + i))
-                cat >> /etc/xray/serve.json <<EOF
+                    # Vmess配置（如果启用）
+                    if [[ "$enable_vmess" == "y" ]]; then
+                        cat >> /etc/xray/serve.json <<EOF
         ,{
-            "listen": "0.0.0.0",
-            "port": $current_port,
-            "protocol": "socks",
-            "tag": "fixed_ipv6_${current_port}",
+            "listen": "${ipv4_addrs[0]}",
+            "port": $((current_port + vmess_offset)),
+            "protocol": "vmess",
+            "tag": "fixed_ipv6_vmess_$i",
             "settings": {
-                "auth": "password",
-                "udp": true,
-                "accounts": [{"user": "$socks_user", "pass": "$socks_pass"}]
+                "clients": [{
+                    "id": "$vmess_uuid",
+                    "alterId": 0
+                }]
+            },
+            "streamSettings": {
+                "network": "tcp"
             }
         }
 EOF
-            done
+                    fi
+                done
+            fi
 
             # 写入出站配置
             cat >> /etc/xray/serve.json <<EOF
     ],
     "outbounds": [
 EOF
-            first=true
-            for ipv6 in "${ipv6_addrs[@]}"; do
-                if [ "$first" = true ]; then
-                    first=false
+            first_outbound=true
+
+            # 为每个IPv6地址创建出站
+            for ipv6 in $(ip -6 addr show dev $INTERFACE | grep "inet6" | grep -v "fe80" | awk '{print $2}' | cut -d'/' -f1); do
+                if [ "$first_outbound" = true ]; then
+                    first_outbound=false
                 else
                     echo "," >> /etc/xray/serve.json
                 fi
@@ -495,9 +661,9 @@ EOF
                 cat >> /etc/xray/serve.json <<EOF
         {
             "protocol": "freedom",
-            "tag": "out_${ipv6}",
-            "settings": {"domainStrategy": "UseIPv6"},
-            "streamSettings": {"sockopt": {"mark": 255}},
+            "tag": "out_$ipv6",
+            "settings": { "domainStrategy": "UseIPv6" },
+            "streamSettings": { "sockopt": { "mark": 255 } },
             "sendThrough": "$ipv6"
         }
 EOF
@@ -508,43 +674,100 @@ EOF
     ],
     "routing": {
         "rules": [
+EOF
+            first_rule=true
+
+            # 策略3路由规则（随机IPv6出）
+            if [[ "$enable_strategy3" == "y" ]]; then
+                cat >> /etc/xray/serve.json <<EOF
             {
                 "type": "field",
-                "inboundTag": ["random_ipv6"],
+                "inboundTag": ["random_ipv6_socks"],
                 "balancerTag": "ipv6_balancer"
             }
 EOF
+                first_rule=false
 
-            # 添加固定IPv6出站规则
-            for ((i=0; i<port_count && i<${#ipv6_addrs[@]}; i++)); do
-                current_port=$((port2 + i))
-                current_ipv6="${ipv6_addrs[$i]}"
-                cat >> /etc/xray/serve.json <<EOF
+                if [[ "$enable_vmess" == "y" ]]; then
+                    cat >> /etc/xray/serve.json <<EOF
             ,{
                 "type": "field",
-                "inboundTag": ["fixed_ipv6_${current_port}"],
-                "outboundTag": "out_${current_ipv6}"
+                "inboundTag": ["random_ipv6_vmess"],
+                "balancerTag": "ipv6_balancer"
             }
 EOF
-            done
+                fi
+            fi
 
-            # 完成路由配置
-            cat >> /etc/xray/serve.json <<EOF
+            # 策略4路由规则（固定IPv6出）
+            if [[ "$enable_strategy4" == "y" ]]; then
+                ipv6_list=($(ip -6 addr show dev $INTERFACE | grep "inet6" | grep -v "fe80" | awk '{print $2}' | cut -d'/' -f1))
+                for ((i=0; i<port_count && i<${#ipv6_list[@]}; i++)); do
+                    if [ "$first_rule" = false ]; then
+                        echo "," >> /etc/xray/serve.json
+                    fi
+                    first_rule=false
+                    
+                    cat >> /etc/xray/serve.json <<EOF
+            {
+                "type": "field",
+                "inboundTag": ["fixed_ipv6_socks_$i"],
+                "outboundTag": "out_${ipv6_list[i]}"
+            }
+EOF
+                    if [[ "$enable_vmess" == "y" ]]; then
+                        cat >> /etc/xray/serve.json <<EOF
+            ,{
+                "type": "field",
+                "inboundTag": ["fixed_ipv6_vmess_$i"],
+                "outboundTag": "out_${ipv6_list[i]}"
+            }
+EOF
+                    fi
+                done
+            fi
+
+            # 添加负载均衡器配置（如果启用了策略3）
+            if [[ "$enable_strategy3" == "y" ]]; then
+                cat >> /etc/xray/serve.json <<EOF
         ],
         "balancers": [
             {
                 "tag": "ipv6_balancer",
-                "selector": [$(printf '"out_%s",' "${ipv6_addrs[@]}" | sed 's/,$//')],
+                "selector": [$(printf '"out_%s",' $(ip -6 addr show dev $INTERFACE | grep "inet6" | grep -v "fe80" | awk '{print $2}' | cut -d'/' -f1) | sed 's/,$//')],
                 "strategy": {
                     "type": "random"
                 }
             }
         ]
+EOF
+            else
+                cat >> /etc/xray/serve.json <<EOF
+        ]
+EOF
+            fi
+
+            # 完成配置文件
+            cat >> /etc/xray/serve.json <<EOF
     }
 }
 EOF
             ;;
     esac
+
+    # 保存UUID到配置文件
+    if [[ "$enable_vmess" == "y" ]]; then
+        echo "vmess_uuid=$vmess_uuid" > /etc/xray/config.env
+        
+        # 生成客户端配置信息
+        echo -e "\n${YELLOW}Vmess客户端配置信息：${NC}"
+        echo -e "UUID: $vmess_uuid"
+        echo -e "端口: 在SOCKS5端口基础上加 $vmess_offset"
+        echo -e "协议: vmess"
+        echo -e "传输协议: tcp"
+        echo -e "加密方式: auto"
+        echo -e "alterID: 0"
+    fi
 
     # 生成代理列表
     generate_proxy_list "$strategy_group" "$port1" "$port2" "$socks_user" "$socks_pass" "$port_count"
@@ -557,6 +780,10 @@ EOF
         echo -e "${RED}配置文件验证失败${NC}"
         return 1
     fi
+
+    # 重启Xray服务
+    systemctl restart xray
+    echo -e "${GREEN}配置已生成并应用${NC}"
     
     return 0
 }
