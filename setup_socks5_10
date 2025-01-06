@@ -1000,168 +1000,355 @@ get_active_ip_count() {
 }
 
 # ┌─────────────────────────────────────────────┐
-# │ 带宽控制和BBR相关函数                      │
+# │ BBR加速模块                                │
 # └─────────────────────────────────────────────┘
-get_bandwidth_utilization() {
-    local interface=$1
-    local rx_bytes_before
-    local tx_bytes_before
-    local rx_bytes_after
-    local tx_bytes_after
-    local rx_rate
-    local tx_rate
-
-    rx_bytes_before=$(ifconfig "$interface" | awk '/RX bytes/{split($5,a,":"); print a[2]}')
-    tx_bytes_before=$(ifconfig "$interface" | awk '/TX bytes/{split($5,a,":"); print a[2]}')
-    sleep 1
-    rx_bytes_after=$(ifconfig "$interface" | awk '/RX bytes/{split($5,a,":"); print a[2]}')
-    tx_bytes_after=$(ifconfig "$interface" | awk '/TX bytes/{split($5,a,":"); print a[2]}')
-
-    rx_rate=$((rx_bytes_after - rx_bytes_before))
-    tx_rate=$((tx_bytes_after - tx_bytes_before))
-
-    echo "$((rx_rate + tx_rate))"
-}
-
-calculate_combined_load() {
-    local connections=$1
-    local bandwidth_utilization=$2
-    local connection_weight=0.5
-    local utilization_weight=0.5
-    echo "$((connection_weight * connections + utilization_weight * bandwidth_utilization))"
-}
-
-apply_bandwidth_limit() {
-    local interface=$1
-    local bandwidth_kbps=$2
-
-    # 确保 tc 命令存在
-    if ! command -v tc &> /dev/null; then
-        echo -e "${RED}错误: 未找到 tc 命令，请安装 iproute2 包。${NC}"
-        return 1
-    fi
-
-    # 将带宽转换为 bps
-    local bandwidth_bps=$((bandwidth_kbps * 1024))
-
-    # 清除现有的 qdisc 规则
-    tc qdisc del dev "$interface" root 2>/dev/null
-
-    # 添加 htb qdisc
-    tc qdisc add dev "$interface" root handle 1: htb default 1
-
-    # 添加 class
-    tc class add dev "$interface" parent 1: classid 1:1 htb rate "${bandwidth_bps}bit"
-
-    echo "为接口 $interface 设置带宽限制为 ${bandwidth_kbps} kbps"
-}
-
-get_connections() {
-  local ip=$1
-  # 使用 netstat 或 ss 命令获取指定 IP 的连接数
-  netstat -an | grep "ESTABLISHED" | grep "$ip" | wc -l
-}
-
-get_interface_for_ip() {
-  local ip=$1
-  # 使用 ip route get 命令获取指定 IP 的网络接口
-  ip route get "$ip" 2>/dev/null | awk '{print $5}'
-}
-
-dynamic_qos_control() {
-    local total_available_bandwidth_kbps=$1
-    local -n proxy_ips_array=$2  # 使用 nameref 传递数组
-
-    local total_load=0
-    declare -A ip_loads
-
-    # 遍历 proxy_ips 数组
-    for ip in "${proxy_ips_array[@]}"; do
-        local connections
-        connections=$(get_connections "$ip")
-        local interface
-        interface=$(get_interface_for_ip "$ip")
-        if [ -n "$interface" ]; then
-            local bandwidth_utilization
-            bandwidth_utilization=$(get_bandwidth_utilization "$interface")
-            local load
-            load=$(calculate_combined_load "$connections" "$bandwidth_utilization")
-            ip_loads["$ip"]="$load"
-            total_load=$((total_load + load))
-        else
-            echo "找不到 IP 地址 $ip 对应的网络接口"
-        fi
-    done
-
-    # 遍历 proxy_ips 数组以应用带宽限制
-    for ip in "${proxy_ips_array[@]}"; do
-        local interface
-        interface=$(get_interface_for_ip "$ip")
-        if [ -n "$interface" ]; then
-            if [ "$total_load" -gt 0 ]; then
-                local allocated_bandwidth_kbps
-                allocated_bandwidth_kbps=$(echo "scale=0; ${ip_loads["$ip"]} / $total_load * $total_available_bandwidth_kbps" | bc)
-                apply_bandwidth_limit "$interface" "$allocated_bandwidth_kbps"
-            else
-                echo "总负载为 0，跳过带宽分配"
-            fi
-        fi
-    done
-}
-
-setup_bandwidth_control() {
-    echo -e "${YELLOW}开始设置带宽控制 (集成 QoS 模块)...${NC}"
-
-    read -p "请输入VPS的总带宽（例如 50Mbit）: " total_bandwidth_str
-
-    # 提取带宽数值并转换为 kbps
-    local total_bandwidth_kbps=$(echo "$total_bandwidth_str" | sed 's/Mbit//' | awk '{print $1 * 1024}')
-
-    if [[ ! "$total_bandwidth_kbps" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}ERROR: 输入的带宽格式错误，请输入类似 '50Mbit' 的格式。${NC}"
-        return 1
-    fi
-
-    # 假设 proxy_ips 数组已在脚本的其他地方定义
-    if [ -z "${ipv4_addrs[@]}" ] && [ -z "${ipv6_addrs[@]}" ]; then
-        echo -e "${YELLOW}未检测到 IPv4 或 IPv6 地址，请确保已获取 IP 地址列表。${NC}"
-        return 1
-    fi
-
-    # 合并 IPv4 和 IPv6 地址到一个数组中
-    declare -a all_ips=("${ipv4_addrs[@]}" "${ipv6_addrs[@]}")
-
-    echo -e "${YELLOW}调用集成 QoS 模块...${NC}"
-    dynamic_qos_control "$total_bandwidth_kbps" all_ips
-
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}带宽控制设置完成 (集成 QoS 模块)。${NC}"
-    else
-        echo -e "${RED}带宽控制设置失败 (集成 QoS 模块执行出错)。${NC}"
-    fi
-
-    return 0
-}
-
 enable_bbr() {
-    echo "启用BBR..."
-
-    if ! sysctl net.ipv4.tcp_available_congestion_control | grep -q "bbr"; then
-        echo -e "${RED}当前内核不支持BBR，请升级内核。${NC}"
+    echo -e "${YELLOW}=== BBR加速配置 ===${NC}"
+    
+    # 检查内核版本和BBR支持
+    if ! check_bbr_prerequisites; then
         return 1
     fi
 
-    echo "net.core.default_qdisc=fq" | tee -a /etc/sysctl.conf
-    echo "net.ipv4.tcp_congestion_control=bbr" | tee -a /etc/sysctl.conf
-
+    # 配置BBR
+    echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
     sysctl -p
 
-    if sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
-        echo -e "${GREEN}BBR已成功启用。${NC}"
+    # 验证BBR状态
+    if verify_bbr_status; then
+        echo -e "${GREEN}BBR加速已成功启用${NC}"
+        show_bbr_status
     else
-        echo -e "${RED}BBR启用失败，请检查配置。${NC}"
+        echo -e "${RED}BBR加速启用失败${NC}"
+        return 1
     fi
+}
+
+# BBR前置条件检查
+check_bbr_prerequisites() {
+    echo "检查BBR支持情况..."
+    
+    # 检查内核版本
+    local kernel_version=$(uname -r | cut -d. -f1,2)
+    if (( $(echo "$kernel_version < 4.9" | bc -l) )); then
+        echo -e "${RED}当前内核版本 ($kernel_version) 过低，BBR需要4.9或更高版本${NC}"
+        
+        # 提供内核升级建议
+        echo -e "${YELLOW}是否需要升级内核？(y/n)${NC}"
+        read -r upgrade_kernel
+        if [[ "$upgrade_kernel" == "y" ]]; then
+            upgrade_kernel_for_bbr
+        fi
+        return 1
+    fi
+
+    # 检查BBR模块
+    if ! modprobe tcp_bbr &>/dev/null; then
+        echo -e "${RED}无法加载BBR模块${NC}"
+        return 1
+    fi
+
     return 0
+}
+
+# 内核升级函数
+upgrade_kernel_for_bbr() {
+    echo -e "${YELLOW}开始升级内核...${NC}"
+    
+    case "$ID" in
+        "ubuntu"|"debian")
+            apt-get update
+            apt-get install -y linux-generic-hwe-$(lsb_release -rs)
+            ;;
+        "centos")
+            yum install -y kernel-ml
+            grub2-set-default 0
+            ;;
+        *)
+            echo -e "${RED}不支持的系统${NC}"
+            return 1
+            ;;
+    esac
+    
+    echo -e "${GREEN}内核已更新，请重启系统后重新运行脚本${NC}"
+    read -p "是否现在重启？(y/n) " reboot_now
+    [[ "$reboot_now" == "y" ]] && reboot
+}
+
+# 验证BBR状态
+verify_bbr_status() {
+    local tcp_control=$(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}')
+    local qdisc=$(sysctl net.core.default_qdisc | awk '{print $3}')
+    
+    [[ "$tcp_control" == "bbr" && "$qdisc" == "fq" ]]
+}
+
+# 显示BBR状态
+show_bbr_status() {
+    echo -e "\n${YELLOW}=== BBR状态信息 ===${NC}"
+    echo -e "拥塞控制算法: $(sysctl net.ipv4.tcp_congestion_control | awk '{print $3}')"
+    echo -e "队列调度算法: $(sysctl net.core.default_qdisc | awk '{print $3}')"
+    echo -e "可用拥塞控制算法: $(cat /proc/sys/net/ipv4/tcp_available_congestion_control)"
+    echo -e "内核版本: $(uname -r)"
+    
+    # 显示TCP性能参数
+    echo -e "\n${YELLOW}TCP性能参数：${NC}"
+    echo -e "TCP窗口大小: $(sysctl net.core.wmem_max | awk '{print $3}')"
+    echo -e "TCP接收缓冲区: $(sysctl net.core.rmem_max | awk '{print $3}')"
+    echo -e "TCP缓存大小: $(sysctl net.ipv4.tcp_mem | awk '{print $0}')"
+}
+
+# BBR管理菜单
+bbr_manager_menu() {
+    while true; do
+        echo -e "\n${YELLOW}=== BBR加速管理 ===${NC}"
+        echo "1. 启用BBR加速"
+        echo "2. 检查BBR状态"
+        echo "3. 优化TCP参数"
+        echo "4. 禁用BBR"
+        echo "0. 返回主菜单"
+
+        read -p "请选择操作 [0-4]: " bbr_option
+
+        case $bbr_option in
+            1) enable_bbr ;;
+            2) show_bbr_status ;;
+            3) optimize_tcp_params ;;
+            4) disable_bbr ;;
+            0) return ;;
+            *) echo -e "${RED}无效的选择${NC}" ;;
+        esac
+
+        echo -e "\n按回车键继续..."
+        read
+    done
+}
+
+# TCP参数优化
+optimize_tcp_params() {
+    echo -e "${YELLOW}优化TCP参数...${NC}"
+    
+    # 基础TCP参数优化
+    cat > /etc/sysctl.d/99-tcp-tune.conf <<EOF
+# TCP窗口相关设置
+net.core.wmem_max = 16777216
+net.core.rmem_max = 16777216
+net.ipv4.tcp_wmem = 4096 87380 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+
+# TCP连接相关优化
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_timestamps = 1
+
+# TCP缓冲区优化
+net.core.netdev_max_backlog = 65536
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_max_tw_buckets = 5000
+
+# TCP keepalive优化
+net.ipv4.tcp_keepalive_time = 1200
+net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_keepalive_probes = 3
+EOF
+
+    sysctl -p /etc/sysctl.d/99-tcp-tune.conf
+    echo -e "${GREEN}TCP参数优化完成${NC}"
+}
+
+# 禁用BBR
+disable_bbr() {
+    echo -e "${YELLOW}正在禁用BBR...${NC}"
+    
+    # 恢复默认TCP拥塞控制
+    sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf
+    sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf
+    
+    # 应用cubic算法
+    echo "net.ipv4.tcp_congestion_control=cubic" >> /etc/sysctl.conf
+    sysctl -p
+    
+    echo -e "${GREEN}BBR已禁用，已切换回默认的cubic算法${NC}"
+}
+
+# ┌─────────────────────────────────────────────┐
+# │ 带宽控制模块 v1.0                          │
+# └─────────────────────────────────────────────┘
+
+# 带宽单位转换函数
+convert_bandwidth() {
+    local input=$1
+    local value=$(echo $input | grep -o '[0-9]\+')
+    local unit=$(echo $input | grep -o '[A-Za-z]\+')
+    
+    case "${unit,,}" in
+        "gbps"|"gb"|"gbit") echo $((value * 1024 * 1024)) ;;
+        "mbps"|"mb"|"mbit") echo $((value * 1024)) ;;
+        "kbps"|"kb"|"kbit") echo $value ;;
+        *) echo -1 ;;
+    esac
+}
+
+# 带宽控制主函数
+setup_bandwidth_control() {
+    echo -e "${YELLOW}=== 带宽控制配置 ===${NC}"
+    
+    # 检查必要工具
+    if ! command -v tc &> /dev/null; then
+        echo -e "${RED}正在安装必要工具...${NC}"
+        if [ "$ID" == "centos" ]; then
+            yum install -y iproute tc iftop bmon
+        else
+            apt-get update && apt-get install -y iproute2 iftop bmon
+        fi
+    fi
+
+    # 获取带宽设置
+    while true; do
+        read -p "请输入总带宽限制 (例如: 100Mbps, 1Gbps): " total_bandwidth_str
+        total_bandwidth_kbps=$(convert_bandwidth "$total_bandwidth_str")
+        
+        if [ $total_bandwidth_kbps -gt 0 ]; then
+            break
+        else
+            echo -e "${RED}无效的带宽格式，请使用正确的单位 (Kbps, Mbps, Gbps)${NC}"
+        fi
+    done
+
+    # 获取QoS设置
+    read -p "请输入每个IP的最小保证带宽百分比 (1-100) [默认:10]: " min_guarantee
+    min_guarantee=${min_guarantee:-10}
+
+    # 获取系统IP
+    get_system_ips
+    local ip_count=$((${#ipv4_addrs[@]} + ${#ipv6_addrs[@]}))
+    
+    if [ $ip_count -eq 0 ]; then
+        echo -e "${RED}未检测到可用IP地址${NC}"
+        return 1
+    fi
+
+    echo -e "\n${YELLOW}当前系统配置：${NC}"
+    echo "总带宽: ${total_bandwidth_kbps}Kbps"
+    echo "IP数量: $ip_count"
+    echo "最小保证带宽比例: ${min_guarantee}%"
+
+    # 计算每个IP的基础带宽
+    local base_bandwidth=$((total_bandwidth_kbps * min_guarantee / 100 / ip_count))
+    local burst_bandwidth=$((base_bandwidth * 2))
+    
+    echo "每IP基础带宽: ${base_bandwidth}Kbps"
+    echo "突发带宽上限: ${burst_bandwidth}Kbps"
+
+    # 应用带宽控制
+    for interface in $(get_active_interfaces); do
+        echo -e "\n${YELLOW}配置接口: $interface${NC}"
+        
+        # 清除现有规则
+        tc qdisc del dev $interface root 2>/dev/null
+        
+        # 创建HTB根队列
+        tc qdisc add dev $interface root handle 1: htb default 1
+        tc class add dev $interface parent 1: classid 1:1 htb \
+            rate ${total_bandwidth_kbps}kbit \
+            ceil ${total_bandwidth_kbps}kbit
+
+        # 配置IPv4规则
+        local class_id=10
+        for ip in "${ipv4_addrs[@]}"; do
+            echo "配置 IPv4: $ip"
+            tc class add dev $interface parent 1:1 classid 1:$class_id htb \
+                rate ${base_bandwidth}kbit \
+                ceil ${burst_bandwidth}kbit
+            
+            tc qdisc add dev $interface parent 1:$class_id handle ${class_id}: sfq perturb 10
+            
+            tc filter add dev $interface parent 1: protocol ip prio 1 \
+                u32 match ip dst $ip flowid 1:$class_id
+            
+            ((class_id++))
+        done
+
+        # 配置IPv6规则
+        for ip in "${ipv6_addrs[@]}"; do
+            echo "配置 IPv6: $ip"
+            tc class add dev $interface parent 1:1 classid 1:$class_id htb \
+                rate ${base_bandwidth}kbit \
+                ceil ${burst_bandwidth}kbit
+            
+            tc qdisc add dev $interface parent 1:$class_id handle ${class_id}: sfq perturb 10
+            
+            tc filter add dev $interface parent 1: protocol ipv6 prio 1 \
+                u32 match ip6 dst $ip flowid 1:$class_id
+            
+            ((class_id++))
+        done
+    done
+
+    # 创建并启动监控服务
+    setup_bandwidth_monitoring
+}
+
+# 带宽监控服务
+setup_bandwidth_monitoring() {
+    cat > /usr/local/bin/bandwidth_monitor.sh <<'EOF'
+#!/bin/bash
+INTERVAL=5
+
+while true; do
+    clear
+    date
+    echo "=== 带宽使用情况 ==="
+    for interface in $(ip -o link show | awk -F': ' '$2 != "lo" {print $2}'); do
+        echo -e "\n接口: $interface"
+        tc -s class show dev $interface | grep -E "class htb|Sent"
+    done
+    sleep $INTERVAL
+done
+EOF
+
+    chmod +x /usr/local/bin/bandwidth_monitor.sh
+
+    # 创建系统服务
+    cat > /etc/systemd/system/bandwidth-monitor.service <<EOF
+[Unit]
+Description=Bandwidth Monitoring Service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/bandwidth_monitor.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable bandwidth-monitor
+    systemctl start bandwidth-monitor
+
+    echo -e "${GREEN}带宽监控服务已启动${NC}"
+    echo "使用以下命令查看监控："
+    echo "journalctl -u bandwidth-monitor -f"
+}
+
+# 显示当前带宽状态
+show_bandwidth_status() {
+    echo -e "${YELLOW}=== 当前带宽状态 ===${NC}"
+    
+    for interface in $(get_active_interfaces); do
+        echo -e "\n${GREEN}接口: $interface${NC}"
+        echo -e "${YELLOW}队列规则：${NC}"
+        tc -s qdisc show dev $interface
+        
+        echo -e "\n${YELLOW}带宽分配：${NC}"
+        tc -s class show dev $interface
+        
+        echo -e "\n${YELLOW}实时流量：${NC}"
+        iftop -i $interface -N -n -P -B -t -s 1 2>/dev/null
+    done
 }
 
 # ┌─────────────────────────────────────────────┐
