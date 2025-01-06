@@ -1242,7 +1242,7 @@ EOF
 
 # 设置IP策略
 set_ip_strategy() {
-    # 检查是否已设置凭据，如果没有则设置
+    # 检查是否已设置用户名密码
     if [ -z "$socks_user" ] || [ -z "$socks_pass" ]; then
         echo -e "${YELLOW}未检测到SOCKS5凭据，请先设置：${NC}"
         
@@ -1292,57 +1292,17 @@ EOF
     echo -e "用户名: ${GREEN}$socks_user${NC}"
     echo -e "密码: ${GREEN}$socks_pass${NC}"
 
-    # 选择策略组
-    echo -e "\n${YELLOW}请选择IP策略组：${NC}"
-    echo "1. IPv4策略组（同IP进出 + 随机IPv4出）"
-    echo "2. IPv6策略组（随机IPv6出 + 固定IPv6出）"
-    read -p "请输入选项 [1-2]: " strategy_choice
+    # 调用策略选择函数
+    select_strategy
 
-    # 设置端口
-    case $strategy_choice in
-        1)
-            echo -e "\n${YELLOW}配置IPv4策略组端口：${NC}"
-            read -p "请输入策略1端口(同IP进出): " port1
-            read -p "请输入策略2端口(随机IPv4出): " port2
-            
-            # 验证端口
-            if ! check_port "$port1" || ! check_port "$port2"; then
-                return 1
-            fi
-            
-            generate_xray_config "1,2" "$port1" "$port2" "$socks_user" "$socks_pass"
-            ;;
-        2)
-            echo -e "\n${YELLOW}配置IPv6策略组端口：${NC}"
-            read -p "请输入策略3端口(随机IPv6出): " port1
-            read -p "请输入策略4起始端口(固定IPv6出): " port2
-            read -p "请输入策略4需要的端口数量: " port_count
-            
-            # 验证端口和端口数量
-            if ! check_port "$port1" || ! check_port "$port2"; then
-                return 1
-            fi
-            if [[ ! "$port_count" =~ ^[0-9]+$ ]] || [ "$port_count" -lt 1 ]; then
-                echo -e "${RED}无效的端口数量${NC}"
-                return 1
-            fi
-            
-            generate_xray_config "3,4" "$port1" "$port2" "$socks_user" "$socks_pass" "$port_count"
-            ;;
-        *)
-            echo -e "${RED}无效的选项${NC}"
-            return 1
-            ;;
-    esac
-
-    # 如果配置成功，重启服务
+    # 重启Xray服务
     if [ $? -eq 0 ]; then
-        echo -e "\n${YELLOW}重启Xray服务...${NC}"
-        systemctl restart xray
-        if systemctl is-active --quiet xray; then
-            echo -e "${GREEN}Xray服务已成功重启${NC}"
+        echo -e "${YELLOW}重启Xray服务...${NC}"
+        $service_manager restart xray
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}Xray服务重启成功${NC}"
         else
-            echo -e "${RED}Xray服务启动失败${NC}"
+            echo -e "${RED}Xray服务重启失败${NC}"
             return 1
         fi
     fi
