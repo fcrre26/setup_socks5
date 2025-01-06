@@ -926,6 +926,121 @@ set_ip_strategy() {
 # ┌─────────────────────────────────────────────┐
 # │ 代理管理模块                               │
 # └─────────────────────────────────────────────┘
+# ┌─────────────────────────────────────────────┐
+# │ 代理管理模块                               │
+# └─────────────────────────────────────────────┘
+
+# 策略选择函数
+select_strategy() {
+    echo -e "\n${YELLOW}请选择IP策略组：${NC}"
+    echo "1. IPv4策略组"
+    echo "   - 策略1：同IP进出"
+    echo "   - 策略2：随机IPv4出"
+    echo "2. IPv6策略组"
+    echo "   - 策略3：随机IPv6出"
+    echo "   - 策略4：固定IPv6出"
+    
+    read -p "请选择策略组 [1-2]: " strategy_choice
+
+    # 选择代理协议
+    echo -e "\n${YELLOW}请选择代理协议：${NC}"
+    echo "1. 仅使用SOCKS5"
+    echo "2. SOCKS5 + Vmess"
+    read -p "请选择代理协议 [1-2]: " proxy_type
+    
+    case $strategy_choice in
+        1)
+            echo -e "\n${YELLOW}IPv4策略组配置：${NC}"
+            read -p "是否启用策略1(同IP进出)? (y/n): " enable_strategy1
+            read -p "是否启用策略2(随机IPv4出)? (y/n): " enable_strategy2
+            
+            # 根据代理协议选择设置相应参数
+            if [ "$proxy_type" == "2" ]; then
+                enable_vmess="y"
+                read -p "请输入Vmess端口偏移量(默认1000): " vmess_offset
+                vmess_offset=${vmess_offset:-1000}
+            else
+                enable_vmess="n"
+                vmess_offset=0
+            fi
+            
+            if [[ "$enable_strategy1" == "y" ]]; then
+                read -p "请输入策略1的SOCKS5端口: " port1
+            fi
+            if [[ "$enable_strategy2" == "y" ]]; then
+                read -p "请输入策略2的SOCKS5端口: " port2
+            fi
+            
+            # 检查是否至少启用了一个策略
+            if [[ "$enable_strategy1" != "y" && "$enable_strategy2" != "y" ]]; then
+                echo -e "${RED}错误：至少需要启用一个策略${NC}"
+                return 1
+            fi
+            
+            # 检查端口设置
+            if [[ "$enable_strategy1" == "y" && -z "$port1" ]] || [[ "$enable_strategy2" == "y" && -z "$port2" ]]; then
+                echo -e "${RED}错误：端口设置不能为空${NC}"
+                return 1
+            fi
+            
+            generate_proxy_list "1,2" "$port1" "$port2" "$socks_user" "$socks_pass" \
+                               "$enable_strategy1" "$enable_strategy2" "$enable_vmess" "$vmess_offset"
+            ;;
+            
+        2)
+            echo -e "\n${YELLOW}IPv6策略组配置：${NC}"
+            read -p "是否启用策略3(随机IPv6出)? (y/n): " enable_strategy3
+            read -p "是否启用策略4(固定IPv6出)? (y/n): " enable_strategy4
+            
+            # 根据代理协议选择设置相应参数
+            if [ "$proxy_type" == "2" ]; then
+                enable_vmess="y"
+                read -p "请输入Vmess端口偏移量(默认1000): " vmess_offset
+                vmess_offset=${vmess_offset:-1000}
+            else
+                enable_vmess="n"
+                vmess_offset=0
+            fi
+            
+            if [[ "$enable_strategy3" == "y" ]]; then
+                read -p "请输入策略3的SOCKS5端口: " port1
+            fi
+            if [[ "$enable_strategy4" == "y" ]]; then
+                read -p "请输入策略4的起始端口: " port2
+                read -p "请输入策略4需要的端口数量: " port_count
+            fi
+            
+            # 检查是否至少启用了一个策略
+            if [[ "$enable_strategy3" != "y" && "$enable_strategy4" != "y" ]]; then
+                echo -e "${RED}错误：至少需要启用一个策略${NC}"
+                return 1
+            fi
+            
+            # 检查端口设置
+            if [[ "$enable_strategy3" == "y" && -z "$port1" ]] || [[ "$enable_strategy4" == "y" && -z "$port2" ]]; then
+                echo -e "${RED}错误：端口设置不能为空${NC}"
+                return 1
+            fi
+            
+            # 检查端口数量设置
+            if [[ "$enable_strategy4" == "y" && -z "$port_count" ]]; then
+                echo -e "${RED}错误：端口数量不能为空${NC}"
+                return 1
+            fi
+            
+            generate_proxy_list "3,4" "$port1" "$port2" "$socks_user" "$socks_pass" "$port_count"
+            ;;
+            
+        *)
+            echo -e "${RED}无效的选项${NC}"
+            return 1
+            ;;
+    esac
+    
+    return 0
+}
+
+# 代理列表生成函数
 generate_proxy_list() {
     local strategy_group=$1
     local port1=$2
@@ -956,13 +1071,21 @@ generate_proxy_list() {
             echo -e "${YELLOW}生成同IP进出代理列表...${NC}"
             for ip in "${ipv4_addrs[@]}"; do
                 echo "$ip:$port1:$socks_user:$socks_pass" >> "$temp_file"
-                echo -e "${GREEN}添加代理: $ip:$port1${NC}"
+                echo -e "${GREEN}添加SOCKS5代理: $ip:$port1${NC}"
+                if [[ "$enable_vmess" == "y" ]]; then
+                    echo "$ip:$((port1 + vmess_offset)):vmess:$vmess_uuid" >> "$temp_file"
+                    echo -e "${GREEN}添加Vmess代理: $ip:$((port1 + vmess_offset))${NC}"
+                fi
             done
             
             # 策略2：随机IPv4出
             echo -e "${YELLOW}生成随机IPv4出站代理列表...${NC}"
             echo "${ipv4_addrs[0]}:$port2:$socks_user:$socks_pass" >> "$temp_file"
-            echo -e "${GREEN}添加代理: ${ipv4_addrs[0]}:$port2${NC}"
+            echo -e "${GREEN}添加SOCKS5代理: ${ipv4_addrs[0]}:$port2${NC}"
+            if [[ "$enable_vmess" == "y" ]]; then
+                echo "${ipv4_addrs[0]}:$((port2 + vmess_offset)):vmess:$vmess_uuid" >> "$temp_file"
+                echo -e "${GREEN}添加Vmess代理: ${ipv4_addrs[0]}:$((port2 + vmess_offset))${NC}"
+            fi
             
             # 显示可用的出站地址
             echo -e "${YELLOW}可用随机IPv4出站地址:${NC}"
@@ -975,14 +1098,22 @@ generate_proxy_list() {
             # 策略3：随机IPv6出
             echo -e "${YELLOW}生成随机IPv6出站代理列表...${NC}"
             echo "${ipv4_addrs[0]}:$port1:$socks_user:$socks_pass" >> "$temp_file"
-            echo -e "${GREEN}添加代理: ${ipv4_addrs[0]}:$port1${NC}"
+            echo -e "${GREEN}添加SOCKS5代理: ${ipv4_addrs[0]}:$port1${NC}"
+            if [[ "$enable_vmess" == "y" ]]; then
+                echo "${ipv4_addrs[0]}:$((port1 + vmess_offset)):vmess:$vmess_uuid" >> "$temp_file"
+                echo -e "${GREEN}添加Vmess代理: ${ipv4_addrs[0]}:$((port1 + vmess_offset))${NC}"
+            fi
             
             # 策略4：固定IPv6出
             echo -e "${YELLOW}生成固定IPv6出站代理列表...${NC}"
             for ((i=0; i<port_count; i++)); do
                 current_port=$((port2 + i))
                 echo "${ipv4_addrs[0]}:$current_port:$socks_user:$socks_pass" >> "$temp_file"
-                echo -e "${GREEN}添加代理: ${ipv4_addrs[0]}:$current_port${NC}"
+                echo -e "${GREEN}添加SOCKS5代理: ${ipv4_addrs[0]}:$current_port${NC}"
+                if [[ "$enable_vmess" == "y" ]]; then
+                    echo "${ipv4_addrs[0]}:$((current_port + vmess_offset)):vmess:$vmess_uuid" >> "$temp_file"
+                    echo -e "${GREEN}添加Vmess代理: ${ipv4_addrs[0]}:$((current_port + vmess_offset))${NC}"
+                fi
             done
             
             # 显示可用的IPv6地址
@@ -1022,14 +1153,26 @@ generate_proxy_list() {
     case $strategy_group in
         "1,2")
             echo -e "策略1端口: $port1"
+            [[ "$enable_vmess" == "y" ]] && echo -e "策略1 Vmess端口: $((port1 + vmess_offset))"
             echo -e "策略2端口: $port2"
+            [[ "$enable_vmess" == "y" ]] && echo -e "策略2 Vmess端口: $((port2 + vmess_offset))"
             echo -e "IPv4地址数量: ${#ipv4_addrs[@]}"
+            if [[ "$enable_vmess" == "y" ]]; then
+                echo -e "Vmess UUID: $vmess_uuid"
+                echo -e "Vmess端口偏移: $vmess_offset"
+            fi
             ;;
         "3,4")
             echo -e "策略3端口: $port1"
+            [[ "$enable_vmess" == "y" ]] && echo -e "策略3 Vmess端口: $((port1 + vmess_offset))"
             echo -e "策略4起始端口: $port2"
+            [[ "$enable_vmess" == "y" ]] && echo -e "策略4 Vmess起始端口: $((port2 + vmess_offset))"
             echo -e "策略4端口数量: $port_count"
             echo -e "可用IPv6地址数量: ${#ipv6_addrs[@]}"
+            if [[ "$enable_vmess" == "y" ]]; then
+                echo -e "Vmess UUID: $vmess_uuid"
+                echo -e "Vmess端口偏移: $vmess_offset"
+            fi
             ;;
     esac
 
@@ -1048,7 +1191,6 @@ generate_proxy_list() {
     echo -e "\n${GREEN}代理列表生成完成！${NC}"
     return 0
 }
-
 # ┌─────────────────────────────────────────────┐
 # │ 代理设置模块                               │
 # └─────────────────────────────────────────────┘
