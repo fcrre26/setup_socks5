@@ -1202,20 +1202,10 @@ generate_proxy_list() {
 # ┌─────────────────────────────────────────────┐
 # │ 代理设置模块                               │
 # └─────────────────────────────────────────────┘
+
 # SOCKS5默认凭据
 DEFAULT_SOCKS_USER="pnqu4x"
 DEFAULT_SOCKS_PASS="zqgzNK3LRS"
-
-# Vmess默认设置
-DEFAULT_VMESS_PORT_OFFSET=1000
-DEFAULT_VMESS_ALTER_ID=0
-
-# 全局变量
-socks_user=$DEFAULT_SOCKS_USER
-socks_pass=$DEFAULT_SOCKS_PASS
-vmess_enabled="n"
-vmess_port_offset=$DEFAULT_VMESS_PORT_OFFSET
-vmess_uuid=""
 
 # 代理凭据设置主函数
 set_proxy_credentials() {
