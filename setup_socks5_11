@@ -1325,7 +1325,7 @@ vmess_uuid=$vmess_uuid
 EOF
 
     # 生成代理配置信息文件
-    generate_proxy_info
+    # generate_proxy_info
 }
 
 # 生成代理配置信息文件
