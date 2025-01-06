@@ -1056,6 +1056,18 @@ apply_bandwidth_limit() {
     echo "为接口 $interface 设置带宽限制为 ${bandwidth_kbps} kbps"
 }
 
+get_connections() {
+  local ip=$1
+  # 使用 netstat 或 ss 命令获取指定 IP 的连接数
+  netstat -an | grep "ESTABLISHED" | grep "$ip" | wc -l
+}
+
+get_interface_for_ip() {
+  local ip=$1
+  # 使用 ip route get 命令获取指定 IP 的网络接口
+  ip route get "$ip" 2>/dev/null | awk '{print $5}'
+}
+
 dynamic_qos_control() {
     local total_available_bandwidth_kbps=$1
     local -n proxy_ips_array=$2  # 使用 nameref 传递数组
