@@ -1362,6 +1362,8 @@ load_saved_config() {
         vmess_enabled="n"
         vmess_port_offset=$DEFAULT_VMESS_PORT_OFFSET
     fi
+    # 生成代理配置信息文件
+    # generate_proxy_info # 注释掉这行代码
 }
 
 
