@@ -1202,78 +1202,176 @@ generate_proxy_list() {
 # ┌─────────────────────────────────────────────┐
 # │ 代理设置模块                               │
 # └─────────────────────────────────────────────┘
-
 # SOCKS5默认凭据
-DEFAULT_USER="pnqu4x"
-DEFAULT_PASS="zqgzNK3LRS"
+DEFAULT_SOCKS_USER="pnqu4x"
+DEFAULT_SOCKS_PASS="zqgzNK3LRS"
+
+# Vmess默认设置
+DEFAULT_VMESS_PORT_OFFSET=1000
+DEFAULT_VMESS_ALTER_ID=0
 
 # 全局变量
-socks_user=$DEFAULT_USER
-socks_pass=$DEFAULT_PASS
+socks_user=$DEFAULT_SOCKS_USER
+socks_pass=$DEFAULT_SOCKS_PASS
+vmess_enabled="n"
+vmess_port_offset=$DEFAULT_VMESS_PORT_OFFSET
+vmess_uuid=""
+
+# 代理凭据设置主函数
+set_proxy_credentials() {
+    echo -e "\n${YELLOW}=== 代理凭据设置 ===${NC}"
+    echo "1. 设置SOCKS5凭据"
+    echo "2. 配置Vmess设置"
+    echo "3. 显示当前配置"
+    echo "0. 返回主菜单"
+
+    read -p "请选择操作 [0-3]: " cred_option
+
+    case $cred_option in
+        1) set_socks5_credentials ;;
+        2) set_vmess_settings ;;
+        3) show_current_settings ;;
+        0) return 0 ;;
+        *) echo -e "${RED}无效的选择${NC}" ;;
+    esac
+}
 
 # SOCKS5凭据设置
 set_socks5_credentials() {
-    # 先加载已保存的配置
+    # 加载已保存的配置
     if [ -f /etc/xray/config.env ]; then
         source /etc/xray/config.env
     fi
     
-    # 显示当前凭据
-    echo -e "${YELLOW}当前SOCKS5凭据：${NC}"
+    echo -e "\n${YELLOW}SOCKS5凭据设置：${NC}"
+    echo -e "当前设置："
     echo -e "用户名: ${GREEN}$socks_user${NC}"
     echo -e "密码: ${GREEN}$socks_pass${NC}"
     
-    # 询问是否需要修改
-    read -p "是否需要修改凭据？(y/n): " change_config
-    if [[ "$change_config" == "y" ]]; then
-        read -p "请输入用户名 (默认: $socks_user): " new_user
-        read -p "请输入密码 (默认: $socks_pass): " new_pass
+    read -p "是否修改SOCKS5凭据？(y/n): " change_socks
+    if [[ "$change_socks" == "y" ]]; then
+        read -p "请输入新用户名 (默认: $DEFAULT_SOCKS_USER): " new_user
+        read -p "请输入新密码 (默认: $DEFAULT_SOCKS_PASS): " new_pass
         
-        # 更新凭据（如果有输入）
-        socks_user=${new_user:-$socks_user}
-        socks_pass=${new_pass:-$socks_pass}
+        socks_user=${new_user:-$DEFAULT_SOCKS_USER}
+        socks_pass=${new_pass:-$DEFAULT_SOCKS_PASS}
+        
+        save_credentials
+        echo -e "${GREEN}SOCKS5凭据已更新${NC}"
     fi
-
-    # 保存凭据到文件
-    mkdir -p /etc/xray
-    cat > /etc/xray/config.env <<EOF
-socks_user=$socks_user
-socks_pass=$socks_pass
-EOF
-
-    echo -e "${GREEN}SOCKS5凭据已保存。${NC}"
-    return 0
 }
 
-# 设置IP策略
-set_ip_strategy() {
-    # 先加载已保存的配置
+# Vmess设置
+set_vmess_settings() {
+    # 加载已保存的配置
     if [ -f /etc/xray/config.env ]; then
         source /etc/xray/config.env
     fi
-
-    # 检查是否已设置用户名密码
-    if [ -z "$socks_user" ] || [ -z "$socks_pass" ]; then
-        echo -e "${YELLOW}未检测到SOCKS5凭据，请先设置：${NC}"
-        set_socks5_credentials
+    
+    echo -e "\n${YELLOW}Vmess设置：${NC}"
+    echo -e "当前设置："
+    echo -e "Vmess启用状态: ${GREEN}${vmess_enabled:-n}${NC}"
+    echo -e "端口偏移量: ${GREEN}${vmess_port_offset:-$DEFAULT_VMESS_PORT_OFFSET}${NC}"
+    if [ ! -z "$vmess_uuid" ]; then
+        echo -e "UUID: ${GREEN}$vmess_uuid${NC}"
     fi
-
-    # 调用策略选择函数
-    select_strategy
-
-    # 重启Xray服务
-    if [ $? -eq 0 ]; then
-        echo -e "${YELLOW}重启Xray服务...${NC}"
-        $service_manager restart xray
-        if [ $? -eq 0 ]; then
-            echo -e "${GREEN}Xray服务重启成功${NC}"
-        else
-            echo -e "${RED}Xray服务重启失败${NC}"
-            return 1
+    
+    read -p "是否启用Vmess？(y/n): " enable_vmess
+    vmess_enabled=$enable_vmess
+    
+    if [[ "$enable_vmess" == "y" ]]; then
+        read -p "请输入端口偏移量 (默认: $DEFAULT_VMESS_PORT_OFFSET): " new_offset
+        vmess_port_offset=${new_offset:-$DEFAULT_VMESS_PORT_OFFSET}
+        
+        # 生成新的UUID，如果不存在
+        if [ -z "$vmess_uuid" ]; then
+            vmess_uuid=$(cat /proc/sys/kernel/random/uuid)
+            echo -e "${GREEN}已生成新的UUID: $vmess_uuid${NC}"
         fi
+        
+        save_credentials
+        echo -e "${GREEN}Vmess设置已更新${NC}"
+    else
+        vmess_uuid=""
+        save_credentials
+        echo -e "${YELLOW}Vmess已禁用${NC}"
     fi
+}
 
-    return 0
+# 显示当前设置
+show_current_settings() {
+    # 加载已保存的配置
+    if [ -f /etc/xray/config.env ]; then
+        source /etc/xray/config.env
+    fi
+    
+    echo -e "\n${YELLOW}当前代理设置：${NC}"
+    echo -e "\nSOCKS5设置："
+    echo -e "用户名: ${GREEN}$socks_user${NC}"
+    echo -e "密码: ${GREEN}$socks_pass${NC}"
+    
+    echo -e "\nVmess设置："
+    echo -e "启用状态: ${GREEN}${vmess_enabled:-n}${NC}"
+    if [[ "${vmess_enabled:-n}" == "y" ]]; then
+        echo -e "端口偏移量: ${GREEN}${vmess_port_offset:-$DEFAULT_VMESS_PORT_OFFSET}${NC}"
+        echo -e "UUID: ${GREEN}${vmess_uuid:-未生成}${NC}"
+    fi
+    
+    read -p "按回车键继续..."
+}
+
+# 保存凭据到配置文件
+save_credentials() {
+    mkdir -p /etc/xray
+    cat > /etc/xray/config.env <<EOF
+# SOCKS5设置
+socks_user=$socks_user
+socks_pass=$socks_pass
+
+# Vmess设置
+vmess_enabled=$vmess_enabled
+vmess_port_offset=$vmess_port_offset
+vmess_uuid=$vmess_uuid
+EOF
+
+    # 生成代理配置信息文件
+    generate_proxy_info
+}
+
+# 生成代理配置信息文件
+generate_proxy_info() {
+    local info_file="/root/proxy_info.txt"
+    
+    echo -e "代理服务器配置信息" > $info_file
+    echo -e "===================" >> $info_file
+    echo -e "\nSOCKS5配置：" >> $info_file
+    echo -e "用户名：$socks_user" >> $info_file
+    echo -e "密码：$socks_pass" >> $info_file
+    
+    if [[ "${vmess_enabled:-n}" == "y" ]]; then
+        echo -e "\nVmess配置：" >> $info_file
+        echo -e "端口偏移：$vmess_port_offset" >> $info_file
+        echo -e "UUID：$vmess_uuid" >> $info_file
+        
+        # 生成Vmess链接示例
+        echo -e "\nVmess链接格式：" >> $info_file
+        echo -e "vmess://{base64({"v":"2","ps":"描述","add":"服务器地址","port":"端口","id":"$vmess_uuid","aid":"0","net":"tcp"})}" >> $info_file
+    fi
+    
+    echo -e "${GREEN}配置信息已保存到：$info_file${NC}"
+}
+
+# 加载已保存的配置
+load_saved_config() {
+    if [ -f /etc/xray/config.env ]; then
+        source /etc/xray/config.env
+    else
+        # 使用默认值
+        socks_user=$DEFAULT_SOCKS_USER
+        socks_pass=$DEFAULT_SOCKS_PASS
+        vmess_enabled="n"
+        vmess_port_offset=$DEFAULT_VMESS_PORT_OFFSET
+    fi
 }
 
 
@@ -1906,7 +2004,7 @@ show_menu() {
             ipv6_manager_menu 
             ;;
         5) 
-            set_socks5_credentials 
+            set_proxy_credentials 
             ;;
         6) 
             set_ip_strategy 
