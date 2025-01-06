@@ -1174,151 +1174,108 @@ disable_bbr() {
 }
 
 # ┌─────────────────────────────────────────────┐
-# │ 带宽控制模块 v1.0                          │
+# │ 带宽控制相关函数                            │
 # └─────────────────────────────────────────────┘
 
-# 带宽单位转换函数
-convert_bandwidth() {
-    local input=$1
-    local value=$(echo $input | grep -o '[0-9]\+')
-    local unit=$(echo $input | grep -o '[A-Za-z]\+')
-    
-    case "${unit,,}" in
-        "gbps"|"gb"|"gbit") echo $((value * 1024 * 1024)) ;;
-        "mbps"|"mb"|"mbit") echo $((value * 1024)) ;;
-        "kbps"|"kb"|"kbit") echo $value ;;
-        *) echo -1 ;;
-    esac
-}
-
-# 带宽控制主函数
 setup_bandwidth_control() {
     echo -e "${YELLOW}=== 带宽控制配置 ===${NC}"
     
-    # 检查必要工具
-    if ! command -v tc &> /dev/null; then
-        echo -e "${RED}正在安装必要工具...${NC}"
-        if [ "$ID" == "centos" ]; then
-            yum install -y iproute tc iftop bmon
-        else
-            apt-get update && apt-get install -y iproute2 iftop bmon
-        fi
+    # 带宽输入处理
+    read -p "请输入总带宽限制 (单位: M): " input_bandwidth
+    if ! [[ "$input_bandwidth" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}错误：请输入有效的数字${NC}"
+        return 1
     fi
-
-    # 获取带宽设置
-    while true; do
-        read -p "请输入总带宽限制 (例如: 100Mbps, 1Gbps): " total_bandwidth_str
-        total_bandwidth_kbps=$(convert_bandwidth "$total_bandwidth_str")
-        
-        if [ $total_bandwidth_kbps -gt 0 ]; then
-            break
-        else
-            echo -e "${RED}无效的带宽格式，请使用正确的单位 (Kbps, Mbps, Gbps)${NC}"
-        fi
-    done
-
-    # 获取QoS设置
-    read -p "请输入每个IP的最小保证带宽百分比 (1-100) [默认:10]: " min_guarantee
-    min_guarantee=${min_guarantee:-10}
-
-    # 获取系统IP
-    get_system_ips
-    local ip_count=$((${#ipv4_addrs[@]} + ${#ipv6_addrs[@]}))
     
-    if [ $ip_count -eq 0 ]; then
-        echo -e "${RED}未检测到可用IP地址${NC}"
+    # 将M转换为Kbit (1M = 1024Kbit)
+    TOTAL_BANDWIDTH=$((input_bandwidth * 1024))
+    
+    # 获取每个IP的保证带宽百分比
+    read -p "请输入每个IP的最小保证带宽百分比 (1-100) [默认:10]: " GUARANTEE_PERCENT
+    GUARANTEE_PERCENT=${GUARANTEE_PERCENT:-10}
+    
+    if ! [[ "$GUARANTEE_PERCENT" =~ ^[0-9]+$ ]] || [ "$GUARANTEE_PERCENT" -lt 1 ] || [ "$GUARANTEE_PERCENT" -gt 100 ]; then
+        echo -e "${RED}错误：保证带宽百分比必须在1-100之间${NC}"
         return 1
     fi
 
-    echo -e "\n${YELLOW}当前系统配置：${NC}"
-    echo "总带宽: ${total_bandwidth_kbps}Kbps"
-    echo "IP数量: $ip_count"
-    echo "最小保证带宽比例: ${min_guarantee}%"
+    # 获取IP数量
+    IP_COUNT=$(ip -o addr show | grep -v "scope host\|scope link" | wc -l)
+    if [ $IP_COUNT -eq 0 ]; then
+        echo -e "${RED}错误：未检测到有效IP地址${NC}"
+        return 1
+    fi
 
-    # 计算每个IP的基础带宽
-    local base_bandwidth=$((total_bandwidth_kbps * min_guarantee / 100 / ip_count))
-    local burst_bandwidth=$((base_bandwidth * 2))
-    
-    echo "每IP基础带宽: ${base_bandwidth}Kbps"
-    echo "突发带宽上限: ${burst_bandwidth}Kbps"
+    # 计算每个IP的基础带宽和突发带宽
+    BASE_BANDWIDTH=$((TOTAL_BANDWIDTH * GUARANTEE_PERCENT / 100 / IP_COUNT))
+    BURST_BANDWIDTH=$((BASE_BANDWIDTH * 2))
 
-    # 应用带宽控制
-    for interface in $(get_active_interfaces); do
-        echo -e "\n${YELLOW}配置接口: $interface${NC}"
+    echo -e "\n当前系统配置："
+    echo "总带宽: ${TOTAL_BANDWIDTH}Kbps"
+    echo "IP数量: $IP_COUNT"
+    echo "最小保证带宽比例: ${GUARANTEE_PERCENT}%"
+    echo "每IP基础带宽: ${BASE_BANDWIDTH}Kbps"
+    echo "突发带宽上限: ${BURST_BANDWIDTH}Kbps"
+
+    # 获取主网络接口
+    INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
+    if [ -z "$INTERFACE" ]; then
+        echo -e "${RED}错误：无法检测到网络接口${NC}"
+        return 1
+    fi
+
+    echo -e "\n配置接口: $INTERFACE"
+
+    # 清除现有的tc规则
+    tc qdisc del dev $INTERFACE root 2>/dev/null
+
+    # 创建根队列规则
+    tc qdisc add dev $INTERFACE root handle 1: htb default 1
+
+    # 创建主要类别
+    tc class add dev $INTERFACE parent 1: classid 1:1 htb rate ${TOTAL_BANDWIDTH}kbit ceil ${TOTAL_BANDWIDTH}kbit
+
+    # 为每个IP创建子类
+    class_id=2
+    for ip in $(ip -o addr show | grep -v "scope host\|scope link" | awk '{print $4}' | cut -d/ -f1); do
+        echo -e "配置IP: $ip"
         
-        # 清除现有规则
-        tc qdisc del dev $interface root 2>/dev/null
-        
-        # 创建HTB根队列
-        tc qdisc add dev $interface root handle 1: htb default 1
-        tc class add dev $interface parent 1: classid 1:1 htb \
-            rate ${total_bandwidth_kbps}kbit \
-            ceil ${total_bandwidth_kbps}kbit
+        # 创建带宽限制类
+        tc class add dev $INTERFACE parent 1:1 classid 1:$class_id htb \
+            rate $((BASE_BANDWIDTH))kbit \
+            ceil $((BURST_BANDWIDTH))kbit
 
-        # 配置IPv4规则
-        local class_id=10
-        for ip in "${ipv4_addrs[@]}"; do
-            echo "配置 IPv4: $ip"
-            tc class add dev $interface parent 1:1 classid 1:$class_id htb \
-                rate ${base_bandwidth}kbit \
-                ceil ${burst_bandwidth}kbit
-            
-            tc qdisc add dev $interface parent 1:$class_id handle ${class_id}: sfq perturb 10
-            
-            tc filter add dev $interface parent 1: protocol ip prio 1 \
-                u32 match ip dst $ip flowid 1:$class_id
-            
-            ((class_id++))
-        done
+        # 根据IP类型添加过滤器
+        if [[ $ip =~ ":" ]]; then
+            # IPv6
+            tc filter add dev $INTERFACE parent 1: protocol ipv6 prio 1 \
+                u32 match ip6 dst $ip flowid 1:$class_id 2>/dev/null
+        else
+            # IPv4
+            tc filter add dev $INTERFACE parent 1: protocol ip prio 1 \
+                u32 match ip dst $ip flowid 1:$class_id 2>/dev/null
+        fi
 
-        # 配置IPv6规则
-        for ip in "${ipv6_addrs[@]}"; do
-            echo "配置 IPv6: $ip"
-            tc class add dev $interface parent 1:1 classid 1:$class_id htb \
-                rate ${base_bandwidth}kbit \
-                ceil ${burst_bandwidth}kbit
-            
-            tc qdisc add dev $interface parent 1:$class_id handle ${class_id}: sfq perturb 10
-            
-            tc filter add dev $interface parent 1: protocol ipv6 prio 1 \
-                u32 match ip6 dst $ip flowid 1:$class_id
-            
-            ((class_id++))
-        done
+        ((class_id++))
     done
 
-    # 创建并启动监控服务
-    setup_bandwidth_monitoring
+    # 创建带宽监控服务
+    create_bandwidth_monitor_service
+
+    echo -e "${GREEN}带宽控制规则配置完成${NC}"
+    return 0
 }
 
-# 带宽监控服务
-setup_bandwidth_monitoring() {
-    cat > /usr/local/bin/bandwidth_monitor.sh <<'EOF'
-#!/bin/bash
-INTERVAL=5
-
-while true; do
-    clear
-    date
-    echo "=== 带宽使用情况 ==="
-    for interface in $(ip -o link show | awk -F': ' '$2 != "lo" {print $2}'); do
-        echo -e "\n接口: $interface"
-        tc -s class show dev $interface | grep -E "class htb|Sent"
-    done
-    sleep $INTERVAL
-done
-EOF
-
-    chmod +x /usr/local/bin/bandwidth_monitor.sh
-
-    # 创建系统服务
-    cat > /etc/systemd/system/bandwidth-monitor.service <<EOF
+# 创建带宽监控服务
+create_bandwidth_monitor_service() {
+    cat > /etc/systemd/system/bandwidth-monitor.service << EOF
 [Unit]
-Description=Bandwidth Monitoring Service
+Description=Bandwidth Monitor Service
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/bandwidth_monitor.sh
+Type=simple
+ExecStart=/bin/bash -c 'while true; do clear; echo "=== 带宽使用情况 ==="; tc -s class show dev $INTERFACE; sleep 5; done'
 Restart=always
 
 [Install]
@@ -1327,29 +1284,89 @@ EOF
 
     systemctl daemon-reload
     systemctl enable bandwidth-monitor
-    systemctl start bandwidth-monitor
-
-    echo -e "${GREEN}带宽监控服务已启动${NC}"
+    systemctl restart bandwidth-monitor
+    echo "带宽监控服务已启动"
     echo "使用以下命令查看监控："
     echo "journalctl -u bandwidth-monitor -f"
 }
 
 # 显示当前带宽状态
 show_bandwidth_status() {
-    echo -e "${YELLOW}=== 当前带宽状态 ===${NC}"
+    INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
+    if [ -z "$INTERFACE" ]; then
+        echo -e "${RED}错误：无法检测到网络接口${NC}"
+        return 1
+    fi
+
+    echo -e "${YELLOW}当前带宽配置：${NC}"
+    tc -s class show dev $INTERFACE
     
-    for interface in $(get_active_interfaces); do
-        echo -e "\n${GREEN}接口: $interface${NC}"
-        echo -e "${YELLOW}队列规则：${NC}"
-        tc -s qdisc show dev $interface
-        
-        echo -e "\n${YELLOW}带宽分配：${NC}"
-        tc -s class show dev $interface
-        
-        echo -e "\n${YELLOW}实时流量：${NC}"
-        iftop -i $interface -N -n -P -B -t -s 1 2>/dev/null
-    done
+    echo -e "\n${YELLOW}当前过滤器配置：${NC}"
+    tc filter show dev $INTERFACE
 }
+
+# 调整现有带宽限制
+adjust_bandwidth_limits() {
+    INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
+    if [ -z "$INTERFACE" ]; then
+        echo -e "${RED}错误：无法检测到网络接口${NC}"
+        return 1
+    fi
+
+    # 显示当前配置
+    echo -e "${YELLOW}当前配置：${NC}"
+    tc -s class show dev $INTERFACE
+
+    # 获取新的带宽设置
+    read -p "请输入新的总带宽限制 (单位: M): " new_bandwidth
+    if ! [[ "$new_bandwidth" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}错误：请输入有效的数字${NC}"
+        return 1
+    fi
+
+    # 将M转换为Kbit
+    new_bandwidth=$((new_bandwidth * 1024))
+
+    # 更新根类别
+    tc class change dev $INTERFACE parent 1: classid 1:1 htb rate ${new_bandwidth}kbit ceil ${new_bandwidth}kbit
+
+    # 获取IP数量
+    IP_COUNT=$(tc class show dev $INTERFACE | grep "parent 1:1" | wc -l)
+    
+    # 计算新的每IP带宽
+    NEW_BASE_BANDWIDTH=$((new_bandwidth / IP_COUNT))
+    NEW_BURST_BANDWIDTH=$((NEW_BASE_BANDWIDTH * 2))
+
+    # 更新每个子类
+    for class in $(tc class show dev $INTERFACE | grep "parent 1:1" | awk '{print $3}'); do
+        tc class change dev $INTERFACE parent 1:1 classid $class htb \
+            rate $((NEW_BASE_BANDWIDTH))kbit \
+            ceil $((NEW_BURST_BANDWIDTH))kbit
+    done
+
+    echo -e "${GREEN}带宽限制已更新${NC}"
+    show_bandwidth_status
+}
+
+# 停止带宽控制
+stop_bandwidth_control() {
+    INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
+    if [ -z "$INTERFACE" ]; then
+        echo -e "${RED}错误：无法检测到网络接口${NC}"
+        return 1
+    fi
+
+    # 停止带宽监控服务
+    systemctl stop bandwidth-monitor
+    systemctl disable bandwidth-monitor
+
+    # 删除tc规则
+    tc qdisc del dev $INTERFACE root 2>/dev/null
+
+    echo -e "${GREEN}带宽控制已停止${NC}"
+    return 0
+}
+
 
 # ┌─────────────────────────────────────────────┐
 # │ 测试代理连通性                             │
