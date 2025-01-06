@@ -1188,38 +1188,47 @@ generate_proxy_list() {
     return 0
 }
 
-
-
-
-
 # ┌─────────────────────────────────────────────┐
 # │ 代理设置模块                               │
 # └─────────────────────────────────────────────┘
 
-# SOCKS5默认凭据
+# 默认凭据
 DEFAULT_USER="pnqu4x"
 DEFAULT_PASS="zqgzNK3LRS"
+DEFAULT_VMESS_OFFSET=1000
 
 # 全局变量
 socks_user=$DEFAULT_USER
 socks_pass=$DEFAULT_PASS
+vmess_offset=$DEFAULT_VMESS_OFFSET
+vmess_uuid=""
 
-# SOCKS5凭据设置
-set_socks5_credentials() {
+# 代理凭据设置
+set_proxy_credentials() {
     # 显示当前凭据
-    echo -e "${YELLOW}当前SOCKS5凭据：${NC}"
+    echo -e "${YELLOW}当前代理凭据：${NC}"
     echo -e "用户名: ${GREEN}$socks_user${NC}"
     echo -e "密码: ${GREEN}$socks_pass${NC}"
+    if [ ! -z "$vmess_uuid" ]; then
+        echo -e "Vmess UUID: ${GREEN}$vmess_uuid${NC}"
+        echo -e "Vmess端口偏移: ${GREEN}$vmess_offset${NC}"
+    fi
     
     # 询问是否需要修改
     read -p "是否需要修改凭据？(y/n): " change_config
     if [[ "$change_config" == "y" ]]; then
         read -p "请输入用户名 (默认: $socks_user): " new_user
         read -p "请输入密码 (默认: $socks_pass): " new_pass
+        read -p "请输入Vmess端口偏移量 (默认: $vmess_offset): " new_offset
         
         # 更新凭据（如果有输入）
         socks_user=${new_user:-$socks_user}
         socks_pass=${new_pass:-$socks_pass}
+        vmess_offset=${new_offset:-$vmess_offset}
+        
+        # 生成新的UUID
+        vmess_uuid=$(cat /proc/sys/kernel/random/uuid)
+        echo -e "${GREEN}已生成新的Vmess UUID: $vmess_uuid${NC}"
     fi
 
     # 保存凭据到文件
@@ -1227,43 +1236,55 @@ set_socks5_credentials() {
     cat > /etc/xray/config.env <<EOF
 socks_user=$socks_user
 socks_pass=$socks_pass
+vmess_uuid=$vmess_uuid
+vmess_offset=$vmess_offset
 EOF
 
-    echo -e "${GREEN}SOCKS5凭据已保存。${NC}"
+    echo -e "${GREEN}代理凭据已保存。${NC}"
     return 0
 }
 
 # 设置IP策略
 set_ip_strategy() {
     # 检查是否已设置凭据，如果没有则设置
-    if [ -z "$socks_user" ] || [ -z "$socks_pass" ]; then
-        echo -e "${YELLOW}未检测到SOCKS5凭据，请先设置：${NC}"
+    if [ -z "$socks_user" ] || [ -z "$socks_pass" ] || [ -z "$vmess_uuid" ]; then
+        echo -e "${YELLOW}未检测到完整的代理凭据，请先设置：${NC}"
         
         # 显示默认值
         echo -e "默认用户名: ${GREEN}$DEFAULT_USER${NC}"
         echo -e "默认密码: ${GREEN}$DEFAULT_PASS${NC}"
+        echo -e "默认Vmess端口偏移: ${GREEN}$DEFAULT_VMESS_OFFSET${NC}"
         
         # 询问是否使用默认值
         read -p "是否使用默认凭据？(y/n): " use_default
         if [[ "$use_default" != "y" ]]; then
             read -p "请输入用户名 (默认: $DEFAULT_USER): " new_user
             read -p "请输入密码 (默认: $DEFAULT_PASS): " new_pass
+            read -p "请输入Vmess端口偏移量 (默认: $DEFAULT_VMESS_OFFSET): " new_offset
             
             # 更新凭据
             socks_user=${new_user:-$DEFAULT_USER}
             socks_pass=${new_pass:-$DEFAULT_PASS}
+            vmess_offset=${new_offset:-$DEFAULT_VMESS_OFFSET}
         else
             socks_user=$DEFAULT_USER
             socks_pass=$DEFAULT_PASS
+            vmess_offset=$DEFAULT_VMESS_OFFSET
         fi
+
+        # 生成新的UUID
+        vmess_uuid=$(cat /proc/sys/kernel/random/uuid)
+        echo -e "${GREEN}已生成新的Vmess UUID: $vmess_uuid${NC}"
 
         # 保存凭据到文件
         mkdir -p /etc/xray
         cat > /etc/xray/config.env <<EOF
 socks_user=$socks_user
 socks_pass=$socks_pass
+vmess_uuid=$vmess_uuid
+vmess_offset=$vmess_offset
 EOF
-        echo -e "${GREEN}SOCKS5凭据已保存。${NC}"
+        echo -e "${GREEN}代理凭据已保存。${NC}"
     fi
 
     # 获取系统IP
@@ -1281,15 +1302,23 @@ EOF
     done
 
     # 显示当前使用的凭据
-    echo -e "\n${YELLOW}当前SOCKS5凭据：${NC}"
+    echo -e "\n${YELLOW}当前代理凭据：${NC}"
     echo -e "用户名: ${GREEN}$socks_user${NC}"
     echo -e "密码: ${GREEN}$socks_pass${NC}"
+    echo -e "Vmess UUID: ${GREEN}$vmess_uuid${NC}"
+    echo -e "Vmess端口偏移: ${GREEN}$vmess_offset${NC}"
 
     # 选择策略组
     echo -e "\n${YELLOW}请选择IP策略组：${NC}"
     echo "1. IPv4策略组（同IP进出 + 随机IPv4出）"
     echo "2. IPv6策略组（随机IPv6出 + 固定IPv6出）"
     read -p "请输入选项 [1-2]: " strategy_choice
+
+    # 选择代理协议
+    echo -e "\n${YELLOW}请选择代理协议：${NC}"
+    echo "1. 仅使用SOCKS5"
+    echo "2. SOCKS5 + Vmess"
+    read -p "请选择代理协议 [1-2]: " proxy_type
 
     # 设置端口
     case $strategy_choice in
@@ -1303,7 +1332,8 @@ EOF
                 return 1
             fi
             
-            generate_xray_config "1,2" "$port1" "$port2" "$socks_user" "$socks_pass"
+            generate_xray_config "1,2" "$port1" "$port2" "$socks_user" "$socks_pass" \
+                               "1" "$proxy_type" "$vmess_offset" "$vmess_uuid"
             ;;
         2)
             echo -e "\n${YELLOW}配置IPv6策略组端口：${NC}"
@@ -1320,7 +1350,8 @@ EOF
                 return 1
             fi
             
-            generate_xray_config "3,4" "$port1" "$port2" "$socks_user" "$socks_pass" "$port_count"
+            generate_xray_config "3,4" "$port1" "$port2" "$socks_user" "$socks_pass" \
+                               "$port_count" "$proxy_type" "$vmess_offset" "$vmess_uuid"
             ;;
         *)
             echo -e "${RED}无效的选项${NC}"
@@ -1347,12 +1378,21 @@ EOF
 load_saved_config() {
     if [ -f /etc/xray/config.env ]; then
         source /etc/xray/config.env
+        # 如果没有UUID则生成
+        if [ -z "$vmess_uuid" ]; then
+            vmess_uuid=$(cat /proc/sys/kernel/random/uuid)
+            echo "vmess_uuid=$vmess_uuid" >> /etc/xray/config.env
+        fi
+        # 如果没有端口偏移则设置默认值
+        if [ -z "$vmess_offset" ]; then
+            vmess_offset=$DEFAULT_VMESS_OFFSET
+            echo "vmess_offset=$vmess_offset" >> /etc/xray/config.env
+        fi
     fi
 }
 
 # 启动时加载配置
 load_saved_config
-
 
 # ┌─────────────────────────────────────────────┐
 # │ 工具函数                                   │
