@@ -1003,21 +1003,31 @@ get_system_ips() {
     done < <(ip -6 addr show | grep -oP '(?<=inet6\s)[\da-f:]+' | grep -v '^fe80' | grep -v '^::1')
 }
 
-# 执行IP策略配置
+# 设置IP策略
 set_ip_strategy() {
-    # 获取系统IP
-    get_system_ips
+    # 检查是否已设置用户名密码
+    if [ -z "$socks_user" ] || [ -z "$socks_pass" ]; then
+        echo -e "${RED}请先设置SOCKS5用户名和密码${NC}"
+        return 1
+    fi
 
-    # 显示当前IP信息
-    echo -e "${YELLOW}当前系统IP信息：${NC}"
-    echo -e "IPv4地址："
-    for ip in "${ipv4_addrs[@]}"; do
-        echo -e "${GREEN}-> $ip${NC}"
-    done
-    echo -e "\nIPv6地址："
-    for ip in "${ipv6_addrs[@]}"; do
-        echo -e "${GREEN}-> $ip${NC}"
-    done
+    # 调用策略选择函数
+    select_strategy
+
+    # 重启Xray服务
+    if [ $? -eq 0 ]; then
+        echo -e "${YELLOW}重启Xray服务...${NC}"
+        $service_manager restart xray
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}Xray服务重启成功${NC}"
+        else
+            echo -e "${RED}Xray服务重启失败${NC}"
+            return 1
+        fi
+    fi
+
+    return 0
+}
 
     # 获取SOCKS5凭据
     echo -e "\n设置SOCKS5凭据："
