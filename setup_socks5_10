@@ -1002,37 +1002,132 @@ get_active_ip_count() {
 # ┌─────────────────────────────────────────────┐
 # │ 带宽控制和BBR相关函数                      │
 # └─────────────────────────────────────────────┘
-setup_bandwidth_control() {
-    get_active_interfaces
-    get_active_ip_count
+get_bandwidth_utilization() {
+    local interface=$1
+    local rx_bytes_before
+    local tx_bytes_before
+    local rx_bytes_after
+    local tx_bytes_after
+    local rx_rate
+    local tx_rate
 
-    read -p "请输入VPS的总带宽（例如50M）: " total_bandwidth
+    rx_bytes_before=$(ifconfig "$interface" | awk '/RX bytes/{split($5,a,":"); print a[2]}')
+    tx_bytes_before=$(ifconfig "$interface" | awk '/TX bytes/{split($5,a,":"); print a[2]}')
+    sleep 1
+    rx_bytes_after=$(ifconfig "$interface" | awk '/RX bytes/{split($5,a,":"); print a[2]}')
+    tx_bytes_after=$(ifconfig "$interface" | awk '/TX bytes/{split($5,a,":"); print a[2]}')
 
-    if [[ ! $total_bandwidth =~ ^[0-9]+M$ ]]; then
-        echo -e "${RED}ERROR: 输入格式错误，请输入类似'50M'的格式。${NC}"
+    rx_rate=$((rx_bytes_after - rx_bytes_before))
+    tx_rate=$((tx_bytes_after - tx_bytes_before))
+
+    echo "$((rx_rate + tx_rate))"
+}
+
+calculate_combined_load() {
+    local connections=$1
+    local bandwidth_utilization=$2
+    local connection_weight=0.5
+    local utilization_weight=0.5
+    echo "$((connection_weight * connections + utilization_weight * bandwidth_utilization))"
+}
+
+apply_bandwidth_limit() {
+    local interface=$1
+    local bandwidth_kbps=$2
+
+    # 确保 tc 命令存在
+    if ! command -v tc &> /dev/null; then
+        echo -e "${RED}错误: 未找到 tc 命令，请安装 iproute2 包。${NC}"
         return 1
     fi
 
-    if [ "$active_ip_count" -eq 0 ]; then
-        echo "INFO: 没有活动的IP，跳过带宽设置。"
-        return 0
-    fi
+    # 将带宽转换为 bps
+    local bandwidth_bps=$((bandwidth_kbps * 1024))
 
-    local rate=$(echo "${total_bandwidth%M} / $active_ip_count" | bc)Mbit
+    # 清除现有的 qdisc 规则
+    tc qdisc del dev "$interface" root 2>/dev/null
 
-    echo "INFO: 设置带宽控制..."
-    for interface in $interfaces; do
-        tc qdisc del dev $interface root 2>/dev/null
-        tc qdisc add dev $interface root handle 1: htb default 30
-        tc class add dev $interface parent 1: classid 1:1 htb rate $total_bandwidth
+    # 添加 htb qdisc
+    tc qdisc add dev "$interface" root handle 1: htb default 1
 
-        for ip in $(hostname -I); do
-            tc class add dev $interface parent 1:1 classid 1:10 htb rate ${rate} ceil ${rate}
-            tc filter add dev $interface protocol ip parent 1:0 prio 1 u32 match ip dst $ip flowid 1:10
-        done
+    # 添加 class
+    tc class add dev "$interface" parent 1: classid 1:1 htb rate "${bandwidth_bps}bit"
+
+    echo "为接口 $interface 设置带宽限制为 ${bandwidth_kbps} kbps"
+}
+
+dynamic_qos_control() {
+    local total_available_bandwidth_kbps=$1
+    local -n proxy_ips_array=$2  # 使用 nameref 传递数组
+
+    local total_load=0
+    declare -A ip_loads
+
+    # 遍历 proxy_ips 数组
+    for ip in "${proxy_ips_array[@]}"; do
+        local connections
+        connections=$(get_connections "$ip")
+        local interface
+        interface=$(get_interface_for_ip "$ip")
+        if [ -n "$interface" ]; then
+            local bandwidth_utilization
+            bandwidth_utilization=$(get_bandwidth_utilization "$interface")
+            local load
+            load=$(calculate_combined_load "$connections" "$bandwidth_utilization")
+            ip_loads["$ip"]="$load"
+            total_load=$((total_load + load))
+        else
+            echo "找不到 IP 地址 $ip 对应的网络接口"
+        fi
     done
 
-    echo "INFO: 带宽控制设置完成。"
+    # 遍历 proxy_ips 数组以应用带宽限制
+    for ip in "${proxy_ips_array[@]}"; do
+        local interface
+        interface=$(get_interface_for_ip "$ip")
+        if [ -n "$interface" ]; then
+            if [ "$total_load" -gt 0 ]; then
+                local allocated_bandwidth_kbps
+                allocated_bandwidth_kbps=$(echo "scale=0; ${ip_loads["$ip"]} / $total_load * $total_available_bandwidth_kbps" | bc)
+                apply_bandwidth_limit "$interface" "$allocated_bandwidth_kbps"
+            else
+                echo "总负载为 0，跳过带宽分配"
+            fi
+        fi
+    done
+}
+
+setup_bandwidth_control() {
+    echo -e "${YELLOW}开始设置带宽控制 (集成 QoS 模块)...${NC}"
+
+    read -p "请输入VPS的总带宽（例如 50Mbit）: " total_bandwidth_str
+
+    # 提取带宽数值并转换为 kbps
+    local total_bandwidth_kbps=$(echo "$total_bandwidth_str" | sed 's/Mbit//' | awk '{print $1 * 1024}')
+
+    if [[ ! "$total_bandwidth_kbps" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}ERROR: 输入的带宽格式错误，请输入类似 '50Mbit' 的格式。${NC}"
+        return 1
+    fi
+
+    # 假设 proxy_ips 数组已在脚本的其他地方定义
+    if [ -z "${ipv4_addrs[@]}" ] && [ -z "${ipv6_addrs[@]}" ]; then
+        echo -e "${YELLOW}未检测到 IPv4 或 IPv6 地址，请确保已获取 IP 地址列表。${NC}"
+        return 1
+    fi
+
+    # 合并 IPv4 和 IPv6 地址到一个数组中
+    declare -a all_ips=("${ipv4_addrs[@]}" "${ipv6_addrs[@]}")
+
+    echo -e "${YELLOW}调用集成 QoS 模块...${NC}"
+    dynamic_qos_control "$total_bandwidth_kbps" all_ips
+
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}带宽控制设置完成 (集成 QoS 模块)。${NC}"
+    else
+        echo -e "${RED}带宽控制设置失败 (集成 QoS 模块执行出错)。${NC}"
+    fi
+
     return 0
 }
 
@@ -1287,7 +1382,7 @@ show_menu() {
         5) set_socks5_credentials ;;
         6) set_ip_strategy ;;  # 这里改为 set_ip_strategy
         7) test_proxy_connectivity ;;
-        8) 
+        8)
             if [ -f /root/proxy_list.txt ]; then
                 cat /root/proxy_list.txt
             else
